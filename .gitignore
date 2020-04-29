@@ -127,3 +127,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Vim temprory files
+*.swp
+*.swo
+
+# Training results
+output
+
+# Datasets
+datasets

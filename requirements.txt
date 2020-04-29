@@ -1,0 +1,6 @@
+fire
+numpy
+cv2
+boto3
+geojson
+smart_open
