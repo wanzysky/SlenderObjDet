@@ -11,23 +11,21 @@ from neupeak.utils import webcv2
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import Boxes, BoxMode, Instances
 from detectron2.utils.logger import setup_logger
-from detectron2.utils.visualizer import Visualizer
+
+from utils.visualizer import Visualizer
 
 
-def create_instances(predictions, image_size):
+def create_instances(predictions, image_size, chosen):
     ret = Instances(image_size)
 
     score = np.asarray([x["score"] for x in predictions])
-    chosen = (score > args.conf_threshold).nonzero()[0]
+    chosen = ((score > args.conf_threshold) * chosen).nonzero()[0]
     score = score[chosen]
     bbox = np.asarray([predictions[i]["bbox"] for i in chosen]).reshape(-1, 4)
-    bbox = BoxMode.convert(bbox, 0, BoxMode.XYXY_ABS)
-
-    labels = np.asarray([dataset_id_map(predictions[i]["category_id"]) for i in chosen])
+    bbox = BoxMode.convert(bbox, BoxMode.XYXY_ABS, BoxMode.XYXY_ABS)
 
     ret.scores = score
     ret.pred_boxes = Boxes(bbox)
-    ret.pred_classes = labels
 
     try:
         ret.pred_masks = [predictions[i]["segmentation"] for i in chosen]
@@ -46,6 +44,8 @@ if __name__ == "__main__":
     parser.add_argument("--conf-threshold", default=0.5, type=float, help="confidence threshold")
     parser.add_argument("--iou-threshold", default=0.05, type=float, help="confidence threshold")
     args = parser.parse_args()
+
+    interest = set(['baseball bat', 'knife'])
 
     logger = setup_logger()
 
@@ -75,7 +75,6 @@ if __name__ == "__main__":
 
     os.makedirs(args.output, exist_ok=True)
 
-    interest = set(['baseball bat', 'knife'])
     for dic in tqdm.tqdm(dicts):
         flag = False
         for ann in dic['annotations']:
@@ -87,13 +86,13 @@ if __name__ == "__main__":
         img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         basename = os.path.basename(dic["file_name"])
 
-        predictions = create_instances(pred_by_image[dic["image_id"]], img.shape[:2])
         vis = Visualizer(img, metadata)
-        vis_pred = vis.draw_instance_predictions(predictions).get_image()
+
+        vis_pred = vis.draw_proposals_separately(pred_by_image[dic["image_id"]], img.shape[:2], args.conf_threshold)
 
         vis = Visualizer(img, metadata)
-        vis_gt = vis.draw_dataset_dict(dic).get_image()
+        vis_pred.append(vis.draw_dataset_dict(dic).get_image())
 
-        concat = np.concatenate((vis_pred, vis_gt), axis=1)
+        concat = vis.smart_concatenate(vis_pred, out_shape=(2048, 2048))
         webcv2.imshow(os.path.join(args.output, basename), concat[:, :, ::-1])
         webcv2.waitKey()
