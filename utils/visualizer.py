@@ -11,13 +11,25 @@ from neupeak.utils import webcv2
 
 from concern.support import between, all_the_same
 
+
 class Visualizer(D2Visualizer):
 
-    def smart_concatenate(self, images, out_shape=None):
+    def smart_concatenate(self,
+                          images,
+                          min_side: int = None,
+                          out_shape=None) -> np.ndarray:
         assert all_the_same([img.shape for img in images])
 
         num_items = len(images)
         canvas = np.zeros_like(images[0])
+        if min_side is not None:
+            assert out_shape is None, "out_shape has been specified"
+            ratio = canvas.shape[0] / canvas.shape[1]
+            if ratio < 1:
+                out_shape = (min_side, int(min_side / ratio + 0.5))
+            else:
+                out_shape = (int(min_side * ratio + 0.5), min_side)
+
         if out_shape is not None:
             canvas = cv2.resize(canvas, out_shape[::-1])
 
@@ -29,9 +41,9 @@ class Visualizer(D2Visualizer):
             for c in range(num_colums):
                 if not r * num_colums + c < len(images):
                     break
-                canvas[r*h:(r+1)*h, c*w:(c+1)*w] = cv2.resize(images[r*num_colums+c], (w, h))
+                canvas[r * h:(r + 1) * h, c * w:(c + 1)
+                       * w] = cv2.resize(images[r * num_colums + c], (w, h))
         return canvas
-
 
     def draw_proposals_separately(self, proposals, image_shape, conf_threshold):
         ratios_ranges = [(0, 0.6), (0.9, 1.2), (1.5, 2.2)]
@@ -65,7 +77,6 @@ class Visualizer(D2Visualizer):
                 instance.pred_boxes = Boxes(bbox)
                 output_images.append(self.draw_proposals(instance))
         return output_images
-
 
     def draw_proposals(self, proposals):
         img = self.img.copy()
