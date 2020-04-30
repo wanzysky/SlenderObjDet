@@ -7,13 +7,13 @@ from collections import defaultdict
 import cv2
 import tqdm
 from fvcore.common.file_io import PathManager
-from neupeak.utils import webcv2
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import Boxes, BoxMode, Instances
 from detectron2.utils.logger import setup_logger
 
 from utils.visualizer import Visualizer
+from concern import webcv2
 
 
 def create_instances(predictions, image_size):
