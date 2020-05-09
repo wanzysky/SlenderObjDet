@@ -134,6 +134,10 @@ dmypy.json
 
 # Training results
 output
+train_log
 
 # Datasets
 datasets
+
+# Installed package
+src/

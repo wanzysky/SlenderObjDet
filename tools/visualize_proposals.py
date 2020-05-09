@@ -119,4 +119,3 @@ if __name__ == "__main__":
         else:
             cv2.imwrite(os.path.join(args.output, basename), vis[:, :, ::-1])
             cv2.imwrite(os.path.join(args.output, basename) + '-proposals.jpg', concat[:, :, ::-1])
-
