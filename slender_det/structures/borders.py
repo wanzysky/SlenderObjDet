@@ -164,8 +164,6 @@ class BorderMasks(PolygonMasks):
 
             # 2. Draw l2 distance_map 
             draw_border_map(hull, mask_for_instance, expansion_ratio)
-            # hull = dilate_polygon(hull, np.sqrt(polygon_area(hull[:, 0], hull[:, 1])) * expansion_ratio * 0.3)
-            # cv2.fillPoly(mask_for_instance, [(hull-1).astype(np.int32)], 0)
 
             # 3. Draw l1 distance in areas for each neighboring point pairs
             point_x = hull[0]
