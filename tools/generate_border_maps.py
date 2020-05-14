@@ -55,6 +55,7 @@ def save(mask, *file_names):
     with save_path.open('wb') as writer:
         writer.write(encode_image(mask))
 
+
 def process_single(metadata, dic, args):
     masks = BorderMasks([x['segmentation'] for x in dic['annotations'] if not isinstance(x['segmentation'], dict)])
     img = utils.read_image(dic["file_name"], "RGB")
@@ -69,9 +70,10 @@ def process_single(metadata, dic, args):
         webcv2.imshow(dic["file_name"] + "-sizes", (1 - sizes / sizes.max()) * 255)
         webcv2.waitKey()
     else:
-        save(borders, cfg.MASK_DIRECTORY, split_name, "borders", dic["file_name"])
-        save(centers, cfg.MASK_DIRECTORY, split_name, "centers", dic["file_name"])
-        save(sizes, cfg.MASK_DIRECTORY, split_name, "sizes", dic["file_name"])
+        file_name = os.path.basename(dic["file_name"])
+        save(borders, cfg.MASK_DIRECTORY, split_name, "borders", file_name)
+        save(centers, cfg.MASK_DIRECTORY, split_name, "centers", file_name)
+        save(sizes, cfg.MASK_DIRECTORY, split_name, "sizes", file_name)
 
 
 if __name__ == '__main__':
