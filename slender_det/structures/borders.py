@@ -13,8 +13,10 @@ from concern import webcv2
 
 
 @lru_cache()
-def standard_linear(resolution=128):
+def standard_linear(resolution=128, reverse=False):
     grid = (np.mgrid[0:resolution, 0:resolution] / resolution).astype(np.float32).sum(0)
+    if reverse:
+        return (grid < 1) * (1 - grid)
     return (grid < 1) * grid
 
 
@@ -23,14 +25,62 @@ def coordinate_transform(standard: np.ndarray, p_o, p_x, p_y, out_shape):
     source_points = np.array([[0, 0], [0, h], [w, 0]], dtype=np.float32)
     dest_points = np.array([p_o, p_y, p_x], dtype=np.float32)
     M = cv2.getAffineTransform(source_points, dest_points)
-    out_w = dest_points[:, 0].max() - dest_points[:, 0].min()
-    out_h = dest_points[:, 1].max() - dest_points[:, 1].min()
     return cv2.warpAffine(standard, M, out_shape)
 
 
-def perspective_transform(standard:np.ndarray, poly, out_shape):
-    h, w = standard.shape[:2]
-    source_points = np.array([[0, 0]])
+def mask_in_triangle(
+    hull,
+    width,
+    height,
+    point_o,
+    mask,
+    reverse=False,
+):
+    point_x = hull[0]
+    for next_i in range(1, hull.shape[0]):
+        point_y = hull[next_i]
+        local = coordinate_transform(
+            standard_linear(reverse=reverse),
+            point_o, point_x, point_y,
+            (width, height))
+        mask = np.maximum(mask, local)
+        point_x = point_y
+
+    point_y = hull[0]
+    local = coordinate_transform(
+        standard_linear(reverse=reverse),
+        point_o, point_x, point_y,
+        (width, height))
+    mask = np.maximum(mask, np.clip(local, 0, 1))
+    return mask
+
+
+def distance_in_triangle(
+    hull,
+    point_o,
+    mask
+):
+    point_x = hull[0]
+    for next_i in range(1, hull.shape[0]):
+        point_y = hull[next_i]
+        mask_canvas = mask.copy()
+        distance = np.sqrt(np.square((point_x + point_y) / 2 - point_o).sum())
+        cv2.fillPoly(
+            mask_canvas,
+            [(np.array([point_x, point_y, point_o]) + 0.5).astype(np.int32).reshape(-1, 1, 2)],
+            distance)
+        mask = np.maximum(mask, mask_canvas)
+        point_x = point_y
+
+    point_y = hull[0]
+    mask_canvas = mask.copy()
+    distance = np.sqrt(np.square((point_x + point_y) / 2 - point_o).sum())
+    cv2.fillPoly(
+        mask_canvas,
+        [(np.array([point_x, point_y, point_o]) + 0.5).astype(np.int32).reshape(-1, 1, 2)],
+        distance)
+    mask = np.maximum(mask, mask_canvas)
+    return mask
 
 
 def dilate_polygon(polygon: np.ndarray, distance):
@@ -119,7 +169,7 @@ class BorderMasks(PolygonMasks):
         polygons: list[list[ndarray]]. Each ndarray is a float64 vector representing a polygon.
     """
 
-    def border_masks(
+    def masks(
         self,
         mask:np.ndarray=None,
         mask_size:Union[int,tuple,None]=None
@@ -131,16 +181,24 @@ class BorderMasks(PolygonMasks):
         assert not (mask and mask_size), "Only one of mask and size should be specified."
         if mask is None:
             mask_size = make_dual(mask_size)
-            mask = np.zeros(mask_size, dtype=np.float32)
-        return self.mask_inside_polygons(mask)
+        border_mask = np.zeros(mask_size, dtype=np.float32)
+        center_mask = np.zeros(mask_size, dtype=np.float32)
+        size_mask = np.zeros(mask_size, dtype=np.float32)
+        border_mask, center_mask, size_mask = self.border_masks(
+            border_mask, center_mask, size_mask)
+        return border_mask, center_mask, size_mask
 
-    def mask_inside_polygons(
+
+    def border_masks(
         self,
-        mask:np.ndarray,
+        border_mask:np.ndarray,
+        center_mask:np.ndarray,
+        size_mask:np.ndarray,
         expansion_ratio:float=0.1
     ) -> np.ndarray:
-        bboxes = self.get_bounding_boxes()
-        for polygons_per_instance, bbox in zip(self.polygons, bboxes):
+        assert border_mask.shape == center_mask.shape
+
+        for polygons_per_instance in self.polygons:
             polygon_points = np.concatenate(polygons_per_instance, axis=0).reshape(-1, 2)
             # 1. Convet polygon to convex hull.
             hull = cv2.convexHull(polygon_points.astype(np.float32), clockwise=False)
@@ -150,10 +208,15 @@ class BorderMasks(PolygonMasks):
 
             hull = hull.reshape(-1, 2)
 
-            dilated_hull = dilate_polygon(hull, np.sqrt(polygon_area(hull[:, 0], hull[:, 1])) * expansion_ratio)
+            try:
+                dilated_hull = dilate_polygon(hull, np.sqrt(polygon_area(hull[:, 0], hull[:, 1])) * expansion_ratio)
+            except IndexError:
+                continue
             instance_width = int(dilated_hull[:, 0].max() - dilated_hull[:, 0].min() + 1 - 1e-5)
             instance_height = int(dilated_hull[:, 1].max() - dilated_hull[:, 1].min() + 1 - 1e-5)
-            mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
+            border_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
+            center_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
+            size_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
 
             # Perform rendering on cropped areas to save computation cost.
             shift = dilated_hull.min(0)
@@ -163,38 +226,60 @@ class BorderMasks(PolygonMasks):
             point_o = hull.mean(axis=0)
 
             # 2. Draw l2 distance_map 
-            draw_border_map(hull, mask_for_instance, expansion_ratio)
+            draw_border_map(hull, border_mask_for_instance, expansion_ratio)
 
             # 3. Draw l1 distance in areas for each neighboring point pairs
-            point_x = hull[0]
-            for next_i in range(1, hull.shape[0]):
-                point_y = hull[next_i]
-                local = coordinate_transform(
-                    standard_linear(),
-                    point_o, point_x, point_y,
-                    (instance_width, instance_height))
-                mask_for_instance = np.maximum(mask_for_instance, local)
-                point_x = point_y
-
-            point_y = hull[0]
-            local = coordinate_transform(
-                standard_linear(),
-                point_o, point_x, point_y,
-                (instance_width, instance_height))
-            mask_for_instance = np.maximum(mask_for_instance, np.clip(local, 0, 1))
-
+            border_mask_for_instance = mask_in_triangle(
+                hull,
+                instance_width,
+                instance_height,
+                point_o,
+                border_mask_for_instance,
+                reverse=False)
+            center_mask_for_instance = mask_in_triangle(
+                hull,
+                instance_width,
+                instance_height,
+                point_o,
+                center_mask_for_instance,
+                reverse=True)
+            size_mask_for_instance = distance_in_triangle(hull, point_o, size_mask_for_instance)
             # 4. Attach to the mask for whole image
             xmin, ymin = shift
             xmax = xmin + instance_width
             ymax = ymin + instance_height
-            xmin_valid = min(max(0, xmin), mask.shape[1] - 1)
-            xmax_valid = min(max(0, xmax), mask.shape[1] - 1)
-            ymin_valid = min(max(0, ymin), mask.shape[0] - 1)
-            ymax_valid = min(max(0, ymax), mask.shape[0] - 1)
-            mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
-                mask_for_instance[
+            xmin_valid = min(max(0, xmin), border_mask.shape[1] - 1)
+            xmax_valid = min(max(0, xmax), border_mask.shape[1] - 1)
+            ymin_valid = min(max(0, ymin), border_mask.shape[0] - 1)
+            ymax_valid = min(max(0, ymax), border_mask.shape[0] - 1)
+
+            border_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
+                border_mask_for_instance[
                     ymin_valid-ymin:ymax_valid-ymax+instance_height,
                     xmin_valid-xmin:xmax_valid-xmax+instance_width],
-                mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
+                border_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
 
-        return mask
+            center_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
+                center_mask_for_instance[
+                    ymin_valid-ymin:ymax_valid-ymax+instance_height,
+                    xmin_valid-xmin:xmax_valid-xmax+instance_width],
+                center_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
+
+            size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
+                size_mask_for_instance[
+                    ymin_valid-ymin:ymax_valid-ymax+instance_height,
+                    xmin_valid-xmin:xmax_valid-xmax+instance_width],
+                size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
+
+        return border_mask, center_mask, size_mask
+
+    def gradient(self, mask):
+        horizontal_padding = np.concatenate(
+            [np.zeros((mask.shape[0], 1), dtype=mask.dtype), mask],
+            axis=1)
+        vertical_padding = np.concatenate(
+            [np.zeros((1, mask.shape[1]), dtype=mask.dtype), mask],
+            axis=0)
+
+        return np.abs(horizontal_padding[:, 1:] - horizontal_padding[:, :-1]), \
+                np.abs(vertical_padding[1:] - vertical_padding[:-1])
