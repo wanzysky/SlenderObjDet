@@ -1,4 +1,5 @@
 from typing import Dict
+from collections import defaultdict
 
 import torch
 from torch import nn
@@ -7,6 +8,7 @@ import torch.nn.functional as F
 from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
 from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
+from detectron2.utils.events import get_event_storage
 
 
 def likelyhood_loss(target: torch.Tensor, coordinates: torch.Tensor, mask=None):
@@ -16,13 +18,15 @@ def likelyhood_loss(target: torch.Tensor, coordinates: torch.Tensor, mask=None):
         target: (Tensor): Target distribution with maximum value 1, whose shape is (N, H, W).
         indices: (Tensor): Predicted sampling points with shape (N, P, 2, H, W) on the target distribution.
     """
+    target = target.unsqueeze(1)
     # (N, PxH, W, 2)
     coordinates = coordinates.permute(0, 1, 3, 4, 2)
     N, P, H, W = coordinates.shape[:-1]
-    coordinates = coordinates.view(N, P * H, W, 2)
-    likelyhood = F.grid_sample(target, coordinates).view(N, P, H, W)
-    if mask:
-        likelyhood = likelyhood * mask
+    coordinates = coordinates.reshape(N, P * H, W, 2)
+    likelyhood = F.grid_sample(target, coordinates).reshape(N, P, H, W)
+    if mask is not None:
+        likelyhood = likelyhood * \
+            F.grid_sample(mask.unsqueeze(1).type(torch.float32), coordinates).reshape(N, P, H, W)
     return -torch.log(likelyhood.mean(2).mean(2) + 1e-8)
 
 
@@ -33,58 +37,109 @@ def offsets2coordinates(offsets: torch.Tensor, image_shape):
     Returns:
         indices (Tensor:Long): Shape (N, 9, 2, H, W)
     """
+    H, W = image_shape
     ys, xs = torch.meshgrid(
         torch.linspace(0, image_shape[1] - 1, offsets.shape[-2]),
         torch.linspace(0, image_shape[0] - 1, offsets.shape[-1]))
+    xs = xs.to(offsets.device)
+    ys = ys.to(offsets.device)
     offsets = offsets.view(-1, 9, 2, offsets.shape[-2], offsets.shape[-1])
     coordinates = torch.stack([xs, ys], dim=0).view(1, 1, 2, xs.shape[-2], xs.shape[-1])
-    return offsets + coordinates
+    coordinates = offsets + coordinates
+    return torch.stack([coordinates[:, :, 0].clamp(0, W - 1), coordinates[:, :, 1].clamp(0, H - 1)], dim=2)
 
 
 class PointsProposalOutputs(object):
     def __init__(
         self,
         images,
-        pred_logists,
+        pred_logits,
         pred_offsets,
         gt_centers=None,
         gt_borders=None,
-        gt_logits=None
+        gt_sizes=None
     ):
         self.image_sizes = images.image_sizes
-        self.pred_logists = pred_logists
+        self.pred_logits = pred_logits
         self.pred_offsets = pred_offsets
-        self.pred_coordinates = offsets2coordinates(pred_offsets, images.tensor.shape[-2:])
+        self.pred_coordinates = [offsets2coordinates(
+            offset, images.tensor.shape[-2:]) for offset in pred_offsets]
 
-        self.gt_centers = gt_centers
-        self.gt_borders = gt_borders
-        self.gt_logits = gt_logits
+        device = self.pred_logits[0].device
+        self.gt_centers = gt_centers.tensor.to(device)
+        self.gt_borders = gt_borders.tensor.to(device)
+        self.gt_sizes = gt_sizes.tensor.to(device)
 
+        self.num_feature_maps = len(pred_logits)
 
-    def losses(self, with_center_l1=False):
-        object_logits_loss = F.binary_cross_entropy_with_logits(
-            self.pred_logists,
-            self.gt_logits,
-            reduction="sum")
-        border_points = torch.cat(
-            [self.pred_coordinates[:4], self.pred_coordinates[5:]],
-            dim=1)
-        center_points = self.pred_coordinates[4:5]
-        border_likely_loss = likelyhood_loss(self.gt_borders, border_points)
-        center_likely_loss = likelyhood_loss(self.gt_centers, center_points)
-        return {"object_loss": object_logits_loss, "border_loss": border_likely_loss, "center_loss": center_likely_loss}
+        storage = get_event_storage()
+        storage.put_image("sizes", self.gt_sizes[0:1] / 512)
+
+    def losses(self, with_center_l1=False, sizes=[16, 32, 64, -1]):
+        losses = dict()
+
+        # Set all object areas as ignore.
+        base_gt_logit = self.gt_sizes.eq(0).float() - 1
+        size_lower_limit = 0
+
+        storage = get_event_storage()
+
+        # Compute losses for each layer separately.
+        for l in range(self.num_feature_maps):
+            size_upper_limit = sizes[l]
+            if size_upper_limit == -1:
+                size_upper_limit = 102400
+
+            # Assign regions in specific siz as 1.
+            pred_logit = self.pred_logits[l]
+            gt_logit = (self.gt_sizes > size_lower_limit) * (self.gt_sizes <= size_upper_limit)
+            size_lower_limit = size_upper_limit
+            gt_logit = gt_logit * 2 + base_gt_logit
+            gt_logit = F.interpolate(
+                gt_logit[:, None], size=pred_logit.shape[2:], mode="nearest")[:, 0]
+            storage.put_image("gt_logits/%d" % l, (gt_logit[0:1] + 1) * 0.5)
+            storage.put_image("pred_logits/%d" % l, torch.sigmoid(pred_logit[0]))
+
+            pred_coordinates = self.pred_coordinates[l]
+            border_points = torch.cat(
+                [pred_coordinates[:, :4], pred_coordinates[:, 5:]],
+                dim=1)
+            center_points = pred_coordinates[:, 4:5]
+
+            # losses["border_likely_loss_%d"%l] = likelyhood_loss(
+            #     self.gt_borders,
+            #     border_points,
+            #     mask=gt_logit>0).mean()
+            # losses["center_likely_loss_%d" % l] = likelyhood_loss(
+            #     self.gt_centers,
+            #     center_points,
+            #     mask=gt_logit > 0).mean()
+
+            pred_logit = pred_logit.view(pred_logit.shape[0], -1)
+            gt_logit = gt_logit.view(gt_logit.shape[0], -1)
+            pos_masks = (gt_logit >= 0)
+            losses["objectness_loss_%d" % l] = (F.binary_cross_entropy_with_logits(
+                pred_logit,
+                gt_logit,
+                reduction="none") * pos_masks).sum() / (pos_masks.sum() + 1e-5)
+
+        return losses
 
     def predict_proposals(self):
-        N = self.pred_coordinates.shape[0]
-        # (N, H*W)
-        xmin = self.pred_coordinates[:, :, 0].min(1).view(N, -1)
-        ymin = self.pred_coordinates[:, :, 1].min(1).view(N, -1)
-        xmax = self.pred_coordinates[:, :, 0].max(1).view(N, -1)
-        ymax = self.pred_coordinates[:, :, 1].max(1).view(N, -1)
-        return torch.stack([xmin, ymin, xmax, ymax], dim=-1)
+        proposals = []
+        for coordinates in self.pred_coordinates:
+            # N, 9, 2, H, W
+            N = coordinates.shape[0]
+            # (N, H*W)
+            xmin = coordinates[:, :, 0].min(1)[0].view(N, -1)
+            ymin = coordinates[:, :, 1].min(1)[0].view(N, -1)
+            xmax = coordinates[:, :, 0].max(1)[0].view(N, -1)
+            ymax = coordinates[:, :, 1].max(1)[0].view(N, -1)
+            proposals.append(torch.stack([xmin, ymin, xmax, ymax], dim=-1))
+        return proposals
 
     def predict_objectness_logits(self):
-        return self.pred_logists.view(self.pred_logists.shape[0], -1)
+        return [x.reshape(x.shape[0], -1) for x in self.pred_logits]
 
 
 @PROPOSAL_GENERATOR_REGISTRY.register()
@@ -95,11 +150,22 @@ class PointsProposalGenerator(nn.Module):
 
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__()
-        self.in_features = cfg.MODEL.ProposalGenerator.IN_FEATURES
-        self.num_points = cfg.MODEL.ProposalGenerator.NUM_POINTS
+        self.in_features = cfg.MODEL.PROPOSAL_GENERATOR.IN_FEATURES
+        self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
+        self.nms_thresh = 0.7
+        self.pre_nms_topk = {
+            True: cfg.MODEL.RPN.PRE_NMS_TOPK_TRAIN,
+            False: cfg.MODEL.RPN.PRE_NMS_TOPK_TEST,
+        }
+        self.post_nms_topk = {
+            True: cfg.MODEL.RPN.POST_NMS_TOPK_TRAIN,
+            False: cfg.MODEL.RPN.POST_NMS_TOPK_TEST,
+        }
+        self.min_box_side_len = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE
+        self.loss_weight = cfg.MODEL.RPN.LOSS_WEIGHT
 
         # We follow RPN in sharing across levels
-        in_channels = [s.channels for s in input_shape]
+        in_channels = [input_shape[f].channels for f in self.in_features]
         assert len(set(in_channels)) == 1, "Each level must have the same channel!"
         in_channels = in_channels[0]
 
@@ -107,6 +173,8 @@ class PointsProposalGenerator(nn.Module):
         self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
         # 1x1 conv for predicting offsets, (x, y) for each point.
         self.offsets = nn.Conv2d(in_channels, self.num_points * 2, kernel_size=1, stride=1)
+        nn.init.constant_(self.offsets.weight, 0)
+        nn.init.constant_(self.offsets.bias, 0)
         # 1x1 conv for predicting if-inside-object logits
         self.in_object_logits = nn.Conv2d(in_channels, 1, kernel_size=1, stride=1)
 
@@ -116,9 +184,9 @@ class PointsProposalGenerator(nn.Module):
         assert scale_y == scale_x
         scale = scale_x
 
-        return (torch.exp(offsets) - 1) * scale * self.base_offset
+        return (torch.exp(offsets * scale) - 1)
 
-    def forward(self, images, features, gt_instances=None):
+    def forward(self, images, features, gt_instances=None, centers=None, borders=None, sizes=None):
         """
         Args:
             images (ImageList): input images of length `N`
@@ -142,19 +210,25 @@ class PointsProposalGenerator(nn.Module):
             pred_in_object_logits.append(self.in_object_logits(t))
             pred_offsets.append(self.rescale(self.offsets(t), t, images))
 
-        if self.training:
-            losses = {k: v * self.loss_weight for k, v in outputs.losses().items()}
-        else:
-            losses = {}
-
         outputs = PointsProposalOutputs(
             images,
             pred_in_object_logits,
             pred_offsets,
-            gt_instances.centers,
-            gt_instances.borders,
-            gt_instances.logits)
+            centers,
+            borders,
+            sizes)
 
+        if self.training:
+            # losses = {k: v * self.loss_weight for k, v in outputs.losses().items()}
+            losses = {k: v for k, v in outputs.losses().items()}
+        else:
+            losses = {}
+
+        if not torch.isfinite(sum(losses.values())).all():
+            import ipdb
+            ipdb.set_trace()
+
+        return None, losses
         with torch.no_grad():
             # Find the top proposals by applying NMS and removing boxes that
             # are too small. The proposals are treated as fixed for approximate
@@ -172,4 +246,4 @@ class PointsProposalGenerator(nn.Module):
                 self.training,
             )
 
-        return proposals, losses
+        return None, losses

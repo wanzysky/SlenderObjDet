@@ -1,11 +1,17 @@
 _BASE_: "Base-RCNN-FPN.yaml"
 MODEL:
-  META_ARCHITECTURE: "ProposalNetwork"
+  META_ARCHITECTURE: "ProposalNetworkWithMasks"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   MASK_ON: False
   RESNETS:
     DEPTH: 50
+  PROPOSAL_GENERATOR:
+    NAME: PointsProposalGenerator
+    IN_FEATURES: ["p2", "p3", "p4", "p5"]
+    NUM_POINTS: 9
+    SIZES: [8, 16, 32, 64, 128]
   RPN:
     POST_NMS_TOPK_TEST: 2000
+
 OUTPUT_DIR: ./train_log/points_rpn/R_50_FPN_1x
 MASK_DIRECTORY: "s3://detection/datasets/coco/masks/"

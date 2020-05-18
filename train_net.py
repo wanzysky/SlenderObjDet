@@ -23,8 +23,7 @@ import torch
 
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.config import get_cfg
-from detectron2.data import MetadataCatalog
+from detectron2.data import MetadataCatalog, build_detection_train_loader
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
@@ -39,6 +38,11 @@ from detectron2.evaluation import (
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
 
+from slender_det.modeling.points_proposal_generator import PointsProposalGenerator
+from slender_det.modeling.meta_arch import ProposalNetworkWithMasks
+from slender_det.data import BorderMaskMapper
+from slender_det.config import get_cfg
+
 
 class Trainer(DefaultTrainer):
     """
@@ -48,6 +52,17 @@ class Trainer(DefaultTrainer):
     "SimpleTrainer", or write your own training loop. You can use
     "tools/plain_train_net.py" as an example.
     """
+
+    @classmethod
+    def build_train_loader(cls, cfg):
+        """
+        Returns:
+            iterable
+
+        It now calls :func:`detectron2.data.build_detection_train_loader`.
+        Overwrite it if you'd like a different data loader.
+        """
+        return build_detection_train_loader(cfg, mapper=BorderMaskMapper(cfg))
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):

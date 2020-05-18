@@ -49,11 +49,11 @@ def parse_args(in_args=None):
     return parser.parse_args(in_args)
 
 
-def save(mask, *file_names):
+def save(mask:np.ndarray, *file_names):
     assert len(file_names) > 0
     save_path = smart_path(os.path.join(file_names[0], *file_names[1:]))
     with save_path.open('wb') as writer:
-        writer.write(encode_image(mask))
+        writer.write(mask.tostring())
 
 
 def process_single(metadata, dic, args):
