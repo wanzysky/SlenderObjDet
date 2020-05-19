@@ -64,7 +64,7 @@ def distance_in_triangle(
     for next_i in range(1, hull.shape[0]):
         point_y = hull[next_i]
         mask_canvas = mask.copy()
-        distance = np.sqrt(np.square((point_x + point_y) / 2 - point_o).sum())
+        distance = np.abs((point_x + point_y) / 2 - point_o)
         cv2.fillPoly(
             mask_canvas,
             [(np.array([point_x, point_y, point_o]) + 0.5).astype(np.int32).reshape(-1, 1, 2)],
@@ -183,7 +183,7 @@ class BorderMasks(PolygonMasks):
             mask_size = make_dual(mask_size)
         border_mask = np.zeros(mask_size, dtype=np.float32)
         center_mask = np.zeros(mask_size, dtype=np.float32)
-        size_mask = np.zeros(mask_size, dtype=np.float32)
+        size_mask = np.zeros((*mask_size, 2), dtype=np.float32)
         border_mask, center_mask, size_mask = self.border_masks(
             border_mask, center_mask, size_mask)
         return border_mask, center_mask, size_mask
@@ -216,7 +216,7 @@ class BorderMasks(PolygonMasks):
             instance_height = int(dilated_hull[:, 1].max() - dilated_hull[:, 1].min() + 1 - 1e-5)
             border_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
             center_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
-            size_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
+            size_mask_for_instance = np.zeros((instance_height, instance_width, 2), dtype=np.float32)
 
             # Perform rendering on cropped areas to save computation cost.
             shift = dilated_hull.min(0)
@@ -265,11 +265,12 @@ class BorderMasks(PolygonMasks):
                     xmin_valid-xmin:xmax_valid-xmax+instance_width],
                 center_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
 
-            size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
+            size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid, :] = np.fmax(
                 size_mask_for_instance[
                     ymin_valid-ymin:ymax_valid-ymax+instance_height,
-                    xmin_valid-xmin:xmax_valid-xmax+instance_width],
-                size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
+                    xmin_valid-xmin:xmax_valid-xmax+instance_width,
+                    :],
+                size_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid, :])
 
         return border_mask, center_mask, size_mask
 

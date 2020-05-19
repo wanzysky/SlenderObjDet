@@ -18,13 +18,14 @@ class BorderMaskMapper(D2Mapper):
     """
 
     def __init__(
-            self,
-            cfg,
-            mask_keys=["borders", "centers", "sizes"],
-            is_train=True
-        ):
+        self,
+        cfg,
+        mask_keys=["borders", "centers", "sizes"],
+        is_train=True
+    ):
         super().__init__(cfg, is_train=is_train)
-        self.mask_directory = smart_path(cfg.MASK_DIRECTORY).joinpath(cfg.DATASETS["TRAIN"][0])
+        self.mask_directory = cfg.MASK_DIRECTORY
+        self.mask_sub_directory = cfg.DATASETS["TRAIN"][0]
         assert len(mask_keys) > 0
         self.mask_keys = mask_keys
 
@@ -32,15 +33,29 @@ class BorderMaskMapper(D2Mapper):
         image_name = smart_path(dataset_dict["file_name"]).name
         masks = dict()
         for key in self.mask_keys:
-            with self.mask_directory.joinpath(key, image_name).open("rb") as reader:
-                image = np.fromstring(reader.read(), dtype=np.float32).reshape((dataset_dict["height"], dataset_dict["width"]))
+            mask_path = smart_path(self.mask_directory).joinpath(self.mask_sub_directory, key, image_name)
+            assert mask_path.exists(), mask_path
 
-                # if key == "sizes":
-                #     resize_tfm = transforms.transforms[0]
-                #     assert isinstance(resize_tfm, T.ResizeTransform)
-                image = transforms.apply_image(image)
+            with mask_path.open("rb") as reader:
+                image = np.fromstring(reader.read(), dtype=np.float32)
 
-                masks[key] = torch.Tensor(image.copy())
+                if key == "sizes":
+                    image = image.reshape((dataset_dict["height"], dataset_dict["width"], 2))
+                    image = image.transpose(2, 0, 1)
+                    resize_tfm = transforms.transforms[0]
+                    assert isinstance(resize_tfm, T.ResizeTransform)
+                    ratio_h = resize_tfm.new_h / resize_tfm.h
+                    ratio_w = resize_tfm.new_w / resize_tfm.w
+                    image = np.stack(
+                        [transforms.apply_image(image[0] * ratio_w),
+                         transforms.apply_image(image[1] * ratio_h)],
+                        axis=0)
+                else:
+                    image = image.reshape((dataset_dict["height"], dataset_dict["width"]))
+                    image = transforms.apply_image(image)
+
+                masks[key] = torch.as_tensor(np.ascontiguousarray(image.copy()))
+                del image
         return masks
 
     def __call__(self, dataset_dict):
@@ -116,15 +131,7 @@ class BorderMaskMapper(D2Mapper):
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
-        # USER: Remove if you don't do semantic/panoptic segmentation.
-        if "sem_seg_file_name" in dataset_dict:
-            with PathManager.open(dataset_dict.pop("sem_seg_file_name"), "rb") as f:
-                sem_seg_gt = Image.open(f)
-                sem_seg_gt = np.asarray(sem_seg_gt, dtype="uint8")
-            sem_seg_gt = transforms.apply_segmentation(sem_seg_gt)
-            sem_seg_gt = torch.as_tensor(sem_seg_gt.astype("long"))
-            dataset_dict["sem_seg"] = sem_seg_gt
         dataset_dict.update(self.masks_for_image(dataset_dict, transforms))
         for key in self.mask_keys:
-            assert dataset_dict[key].shape == dataset_dict["image"].shape[1:]
+            assert dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:], dataset_dict[key].shape
         return dataset_dict

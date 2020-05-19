@@ -67,7 +67,7 @@ def process_single(metadata, dic, args):
         webcv2.imshow(dic["file_name"], vis.get_image()[:, :, ::-1])
         webcv2.imshow(dic["file_name"] + "-border", borders * 255)
         webcv2.imshow(dic["file_name"] + "-centers", centers * 255)
-        webcv2.imshow(dic["file_name"] + "-sizes", (1 - sizes / sizes.max()) * 255)
+        webcv2.imshow(dic["file_name"] + "-sizes", (sizes / sizes.max()).sum(-1) * 255)
         webcv2.waitKey()
     else:
         file_name = os.path.basename(dic["file_name"])

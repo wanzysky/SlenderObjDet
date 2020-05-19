@@ -68,7 +68,7 @@ class PointsProposalOutputs(object):
         device = self.pred_logits[0].device
         self.gt_centers = gt_centers.tensor.to(device)
         self.gt_borders = gt_borders.tensor.to(device)
-        self.gt_sizes = gt_sizes.tensor.to(device)
+        self.gt_sizes = torch.sqrt(torch.pow(gt_sizes.tensor.to(device), 2).sum(1))
 
         self.num_feature_maps = len(pred_logits)
 
@@ -97,6 +97,7 @@ class PointsProposalOutputs(object):
             gt_logit = gt_logit * 2 + base_gt_logit
             gt_logit = F.interpolate(
                 gt_logit[:, None], size=pred_logit.shape[2:], mode="nearest")[:, 0]
+
             storage.put_image("gt_logits/%d" % l, (gt_logit[0:1] + 1) * 0.5)
             storage.put_image("pred_logits/%d" % l, torch.sigmoid(pred_logit[0]))
 
@@ -106,14 +107,18 @@ class PointsProposalOutputs(object):
                 dim=1)
             center_points = pred_coordinates[:, 4:5]
 
-            # losses["border_likely_loss_%d"%l] = likelyhood_loss(
-            #     self.gt_borders,
-            #     border_points,
-            #     mask=gt_logit>0).mean()
-            # losses["center_likely_loss_%d" % l] = likelyhood_loss(
-            #     self.gt_centers,
-            #     center_points,
-            #     mask=gt_logit > 0).mean()
+            losses["border_likely_loss_%d"%l] = border_points.sum() * 0
+            losses["center_likely_loss_%d"%l] = center_points.sum() * 0
+            """
+            losses["border_likely_loss_%d"%l] = likelyhood_loss(
+                self.gt_borders,
+                border_points,
+                mask=gt_logit>0).mean() * 0
+            losses["center_likely_loss_%d"%l] = likelyhood_loss(
+                self.gt_centers,
+                center_points,
+                mask=gt_logit > 0).mean() * 0
+            """
 
             pred_logit = pred_logit.view(pred_logit.shape[0], -1)
             gt_logit = gt_logit.view(gt_logit.shape[0], -1)
@@ -224,11 +229,6 @@ class PointsProposalGenerator(nn.Module):
         else:
             losses = {}
 
-        if not torch.isfinite(sum(losses.values())).all():
-            import ipdb
-            ipdb.set_trace()
-
-        return None, losses
         with torch.no_grad():
             # Find the top proposals by applying NMS and removing boxes that
             # are too small. The proposals are treated as fixed for approximate
