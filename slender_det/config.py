@@ -7,7 +7,13 @@ _C = d2config()
 # Required by SlenderDet
 #-------------------------------------------------------------------------------#
 
-_C.MASK_DIRECTORY = "s3://detection/datasets/coco/masks/"
+_C.USE_NORI = False
+_C.NORI_PATH = "s3://detection/datasets/coco/"
+_C.REDIS = CN()
+_C.REDIS.HOST = "127.0.0.1"
+_C.REDIS.PORT = 6379
+_C.REDIS.DB = 0
+
 
 _C.MODEL.PROPOSAL_GENERATOR.IN_FEATURES = ["p5"]
 _C.MODEL.PROPOSAL_GENERATOR.NUM_POINTS = 9

@@ -73,20 +73,24 @@ class PointsProposalOutputs(object):
         storage = get_event_storage()
         storage.put_image("sizes", self.gt_sizes[0:1] / 512)
 
-    def gt_logit(self, lower, upper, size, stride):
-        xs, ys = torch.meshgrid(
-            torch.linspace(0, size[0]*stride-1, size[0]),
-            torch.linspace(0, size[1]*stride-1, size[1]))
-        grid = torch.stack([xs, ys], 2).to(self.gt_sizes.device)
-        grid = grid.view(1, *size, 2).repeat(self.gt_sizes.shape[0], 1, 1, 1)
-        
-        gt_logit = F.grid_sample(self.gt_sizes[:, None], grid, mode="nearest")
+    def gt_logit(self, lower, upper, size, stride, use_grid=False):
+        assert stride > 1
+        if use_grid:
+            ys, xs = torch.meshgrid(
+                torch.linspace(0, size[0]-1, size[0]),
+                torch.linspace(0, size[1]-1, size[1]))
+            grid = (torch.stack([xs, ys], 2).to(self.gt_sizes.device)) * stride
+            grid = grid.view(1, *size, 2).repeat(self.gt_sizes.shape[0], 1, 1, 1)
+            
+            gt_logit = F.grid_sample(self.gt_sizes[:, None], grid, mode="nearest")
+        else:
+            gt_logit = F.interpolate(self.gt_sizes[:, None], scale_factor=1/stride, mode="nearest")
         base_gt_logit = gt_logit.eq(0).float() - 1
         gt_logit = (gt_logit > lower) * (gt_logit <= upper)
         gt_logit = gt_logit * 2 + base_gt_logit
         return gt_logit
 
-    def losses(self, with_center_l1=False, sizes=[16, 32, 64, -1]):
+    def losses(self, with_center_l1=False, sizes=[32, 64, 128, -1]):
         losses = dict()
 
         # Set all object areas as ignore.
@@ -247,4 +251,6 @@ class PointsProposalGenerator(nn.Module):
                 self.training,
             )
 
+        storage = get_event_storage()
+        storage.clear_images()
         return None, losses

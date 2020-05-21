@@ -14,4 +14,6 @@ MODEL:
     POST_NMS_TOPK_TEST: 2000
 
 OUTPUT_DIR: ./train_log/points_rpn/R_50_FPN_1x
-MASK_DIRECTORY: "s3://detection/datasets/coco/masks/"
+USE_NORI: True
+REDIS:
+    HOST: "10.124.171.195"

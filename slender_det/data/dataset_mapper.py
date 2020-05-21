@@ -1,3 +1,4 @@
+import logging
 import copy
 
 import cv2
@@ -8,8 +9,10 @@ from PIL import Image
 from detectron2.data import DatasetMapper as D2Mapper
 from detectron2.data import transforms as T
 from detectron2.data import detection_utils as utils
+from detectron2.utils.logger import log_every_n_seconds
 
 from concern.smart_path import smart_path
+from utils.nori_redis import NoriRedis
 
 
 class BorderMaskMapper(D2Mapper):
@@ -24,38 +27,49 @@ class BorderMaskMapper(D2Mapper):
         is_train=True
     ):
         super().__init__(cfg, is_train=is_train)
-        self.mask_directory = cfg.MASK_DIRECTORY
-        self.mask_sub_directory = cfg.DATASETS["TRAIN"][0]
         assert len(mask_keys) > 0
         self.mask_keys = mask_keys
+        self.prepare_nori(cfg)
+        self.is_train = is_train
+        self.nori_redis = None
+
+    def prepare_nori(self, cfg):
+        self.use_nori = cfg.USE_NORI
+        if not self.use_nori:
+            return
+        split_name = "val2017" if self.is_train else "val2017"
+
+        self.image_fetcher = NoriRedis(
+            cfg,
+            smart_path(cfg.NORI_PATH).joinpath(split_name + ".nori").as_uri())
+        self.sizes_fecher = NoriRedis(
+            cfg,
+            smart_path(cfg.NORI_PATH).joinpath(split_name + "_sizes.nori").as_uri())
 
     def masks_for_image(self, dataset_dict, transforms):
         image_name = smart_path(dataset_dict["file_name"]).name
         masks = dict()
         for key in self.mask_keys:
-            mask_path = smart_path(self.mask_directory).joinpath(self.mask_sub_directory, key, image_name)
-            assert mask_path.exists(), mask_path
+            data = self.sizes_fecher.fetch(image_name)
+            image = np.fromstring(data, dtype=np.float32)
 
-            with mask_path.open("rb") as reader:
-                image = np.fromstring(reader.read(), dtype=np.float32)
+            if key == "sizes":
+                image = image.reshape((dataset_dict["height"], dataset_dict["width"], 2))
+                image = image.transpose(2, 0, 1)
+                resize_tfm = transforms.transforms[0]
+                assert isinstance(resize_tfm, T.ResizeTransform)
+                ratio_h = resize_tfm.new_h / resize_tfm.h
+                ratio_w = resize_tfm.new_w / resize_tfm.w
+                image = np.stack(
+                    [transforms.apply_image(image[0] * ratio_w),
+                     transforms.apply_image(image[1] * ratio_h)],
+                    axis=0)
+            else:
+                image = image.reshape((dataset_dict["height"], dataset_dict["width"]))
+                image = transforms.apply_image(image)
 
-                if key == "sizes":
-                    image = image.reshape((dataset_dict["height"], dataset_dict["width"], 2))
-                    image = image.transpose(2, 0, 1)
-                    resize_tfm = transforms.transforms[0]
-                    assert isinstance(resize_tfm, T.ResizeTransform)
-                    ratio_h = resize_tfm.new_h / resize_tfm.h
-                    ratio_w = resize_tfm.new_w / resize_tfm.w
-                    image = np.stack(
-                        [transforms.apply_image(image[0] * ratio_w),
-                         transforms.apply_image(image[1] * ratio_h)],
-                        axis=0)
-                else:
-                    image = image.reshape((dataset_dict["height"], dataset_dict["width"]))
-                    image = transforms.apply_image(image)
-
-                masks[key] = torch.as_tensor(np.ascontiguousarray(image.copy()))
-                del image
+            masks[key] = torch.as_tensor(np.ascontiguousarray(image.copy()))
+            del image
         return masks
 
     def __call__(self, dataset_dict):
@@ -68,7 +82,13 @@ class BorderMaskMapper(D2Mapper):
         """
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         # USER: Write your own image loading if it's not from a file
-        image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
+
+        if self.use_nori:
+            data = self.image_fetcher.fetch(dataset_dict["file_name"])
+            image = cv2.imdecode(np.fromstring(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        else:
+            image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
+
         utils.check_image_size(dataset_dict, image)
 
         if "annotations" not in dataset_dict:
