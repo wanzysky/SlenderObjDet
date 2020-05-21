@@ -9,7 +9,7 @@ from detectron2.utils.events import get_event_storage
 
 @META_ARCH_REGISTRY.register()
 class ProposalNetworkWithMasks(ProposalNetwork):
-    masks = ["centers", "borders", "sizes"]
+    masks = ["sizes"]
 
     def forward(self, batched_inputs):
         """

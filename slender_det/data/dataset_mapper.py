@@ -20,7 +20,7 @@ class BorderMaskMapper(D2Mapper):
     def __init__(
         self,
         cfg,
-        mask_keys=["borders", "centers", "sizes"],
+        mask_keys=["sizes"],
         is_train=True
     ):
         super().__init__(cfg, is_train=is_train)

@@ -55,9 +55,8 @@ class PointsProposalOutputs(object):
         images,
         pred_logits,
         pred_offsets,
-        gt_centers=None,
-        gt_borders=None,
-        gt_sizes=None
+        gt_sizes=None,
+        strides=None
     ):
         self.image_sizes = images.image_sizes
         self.pred_logits = pred_logits
@@ -66,24 +65,34 @@ class PointsProposalOutputs(object):
             offset, images.tensor.shape[-2:]) for offset in pred_offsets]
 
         device = self.pred_logits[0].device
-        self.gt_centers = gt_centers.tensor.to(device)
-        self.gt_borders = gt_borders.tensor.to(device)
         self.gt_sizes = torch.sqrt(torch.pow(gt_sizes.tensor.to(device), 2).sum(1))
+        self.strides = strides
 
         self.num_feature_maps = len(pred_logits)
 
         storage = get_event_storage()
         storage.put_image("sizes", self.gt_sizes[0:1] / 512)
 
+    def gt_logit(self, lower, upper, size, stride):
+        xs, ys = torch.meshgrid(
+            torch.linspace(0, size[0]*stride-1, size[0]),
+            torch.linspace(0, size[1]*stride-1, size[1]))
+        grid = torch.stack([xs, ys], 2).to(self.gt_sizes.device)
+        grid = grid.view(1, *size, 2).repeat(self.gt_sizes.shape[0], 1, 1, 1)
+        
+        gt_logit = F.grid_sample(self.gt_sizes[:, None], grid, mode="nearest")
+        base_gt_logit = gt_logit.eq(0).float() - 1
+        gt_logit = (gt_logit > lower) * (gt_logit <= upper)
+        gt_logit = gt_logit * 2 + base_gt_logit
+        return gt_logit
+
     def losses(self, with_center_l1=False, sizes=[16, 32, 64, -1]):
         losses = dict()
 
         # Set all object areas as ignore.
-        base_gt_logit = self.gt_sizes.eq(0).float() - 1
         size_lower_limit = 0
 
         storage = get_event_storage()
-
         # Compute losses for each layer separately.
         for l in range(self.num_feature_maps):
             size_upper_limit = sizes[l]
@@ -92,13 +101,14 @@ class PointsProposalOutputs(object):
 
             # Assign regions in specific siz as 1.
             pred_logit = self.pred_logits[l]
-            gt_logit = (self.gt_sizes > size_lower_limit) * (self.gt_sizes <= size_upper_limit)
+            gt_logit = self.gt_logit(
+                size_lower_limit,
+                size_upper_limit,
+                pred_logit.shape[2:],
+                self.strides[l])
             size_lower_limit = size_upper_limit
-            gt_logit = gt_logit * 2 + base_gt_logit
-            gt_logit = F.interpolate(
-                gt_logit[:, None], size=pred_logit.shape[2:], mode="nearest")[:, 0]
 
-            storage.put_image("gt_logits/%d" % l, (gt_logit[0:1] + 1) * 0.5)
+            storage.put_image("gt_logits/%d" % l, (gt_logit[0] + 1) * 0.5)
             storage.put_image("pred_logits/%d" % l, torch.sigmoid(pred_logit[0]))
 
             pred_coordinates = self.pred_coordinates[l]
@@ -109,16 +119,6 @@ class PointsProposalOutputs(object):
 
             losses["border_likely_loss_%d"%l] = border_points.sum() * 0
             losses["center_likely_loss_%d"%l] = center_points.sum() * 0
-            """
-            losses["border_likely_loss_%d"%l] = likelyhood_loss(
-                self.gt_borders,
-                border_points,
-                mask=gt_logit>0).mean() * 0
-            losses["center_likely_loss_%d"%l] = likelyhood_loss(
-                self.gt_centers,
-                center_points,
-                mask=gt_logit > 0).mean() * 0
-            """
 
             pred_logit = pred_logit.view(pred_logit.shape[0], -1)
             gt_logit = gt_logit.view(gt_logit.shape[0], -1)
@@ -173,6 +173,7 @@ class PointsProposalGenerator(nn.Module):
         in_channels = [input_shape[f].channels for f in self.in_features]
         assert len(set(in_channels)) == 1, "Each level must have the same channel!"
         in_channels = in_channels[0]
+        self.strides = [input_shape[f].stride for f in self.in_features]
 
         # 3x3 conv for the hidden representation
         self.conv = nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
@@ -183,6 +184,7 @@ class PointsProposalGenerator(nn.Module):
         # 1x1 conv for predicting if-inside-object logits
         self.in_object_logits = nn.Conv2d(in_channels, 1, kernel_size=1, stride=1)
 
+
     def rescale(self, offsets, feature, images):
         scale_x = images.tensor.shape[-1] / feature.shape[-1]
         scale_y = images.tensor.shape[-2] / feature.shape[-2]
@@ -191,7 +193,7 @@ class PointsProposalGenerator(nn.Module):
 
         return (torch.exp(offsets * scale) - 1)
 
-    def forward(self, images, features, gt_instances=None, centers=None, borders=None, sizes=None):
+    def forward(self, images, features, gt_instances=None, sizes=None):
         """
         Args:
             images (ImageList): input images of length `N`
@@ -219,9 +221,8 @@ class PointsProposalGenerator(nn.Module):
             images,
             pred_in_object_logits,
             pred_offsets,
-            centers,
-            borders,
-            sizes)
+            sizes,
+            strides=self.strides)
 
         if self.training:
             # losses = {k: v * self.loss_weight for k, v in outputs.losses().items()}
