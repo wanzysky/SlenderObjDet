@@ -32,6 +32,7 @@ class BorderMaskMapper(D2Mapper):
         self.prepare_nori(cfg)
         self.is_train = is_train
         self.nori_redis = None
+        self.need_masks = cfg.NEED_MASKS
 
     def prepare_nori(self, cfg):
         self.use_nori = cfg.USE_NORI
@@ -42,9 +43,10 @@ class BorderMaskMapper(D2Mapper):
         self.image_fetcher = NoriRedis(
             cfg,
             smart_path(cfg.NORI_PATH).joinpath(split_name + ".nori").as_uri())
-        self.sizes_fecher = NoriRedis(
-            cfg,
-            smart_path(cfg.NORI_PATH).joinpath(split_name + "_sizes.nori").as_uri())
+        if self.need_masks:
+            self.sizes_fecher = NoriRedis(
+                cfg,
+                smart_path(cfg.NORI_PATH).joinpath(split_name + "_sizes.nori").as_uri())
 
     def masks_for_image(self, dataset_dict, transforms):
         image_name = smart_path(dataset_dict["file_name"]).name
@@ -151,7 +153,8 @@ class BorderMaskMapper(D2Mapper):
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
 
-        dataset_dict.update(self.masks_for_image(dataset_dict, transforms))
-        for key in self.mask_keys:
-            assert dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:], dataset_dict[key].shape
+        if self.need_masks:
+            dataset_dict.update(self.masks_for_image(dataset_dict, transforms))
+            for key in self.mask_keys:
+                assert dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:], dataset_dict[key].shape
         return dataset_dict
