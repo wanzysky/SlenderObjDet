@@ -176,13 +176,20 @@ class RepPointsGeneratorResult():
         # (N, X, 4)
         pred_bboxes = torch.cat(
             [p.view(p.size(0), 4, -1) for p in self.pred_bboxes], dim=2)
+
+        pos_masks = self.gt_labels > 0
+        pos_count = pos_masks.sum()
+        neg_masks = ~pos_masks
+        neg_count = torch.min(neg_masks.sum(), pos_count * 3).item()
+
         cls_loss = sigmoid_focal_loss_jit(
             pred_objectness_logits,
             self.gt_labels,
             alpha=0.25,
-            reduction="mean")
+            reduction="none")
+        neg_cls_loss, _ = cls_loss[neg_masks].topk(neg_count)
+        cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss.mean()
         # (N, X)
-        pos_masks = self.gt_labels > 0
         pred_bboxes = pred_bboxes.permute(0, 2, 1) / strides[None, :, None] / 4
         gt_bboxes = self.gt_boxes / strides[None, :, None] / 4
         localization_loss = smooth_l1_loss(
@@ -290,7 +297,7 @@ class RepPointsGenerator(nn.Module):
 
             distance_matrix = retry_if_cuda_oom(pairwise_dist)(centers, gt_boxes_i)
             level_match_matrix = retry_if_cuda_oom(stride_match)(strides, gt_boxes_i)
-            distance_matrix = distance_matrix + level_match_matrix * 1e5
+            distance_matrix = distance_matrix + ~level_match_matrix * 1e5
             # Shpae(M), indicating the nearest point of each object center, where M is the number of boxes.
             gt_min_dists, gt_min_idxs = distance_matrix.min(0)
             # Shpae(P), indicating the nearest object center of each point, where P is the number of points.
