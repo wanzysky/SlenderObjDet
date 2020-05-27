@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
-from detectron2.modeling.proposal_generator.proposal_utils import find_top_rpn_proposals
+from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
 from detectron2.utils.events import get_event_storage
 
 
@@ -26,7 +26,7 @@ def likelyhood_loss(target: torch.Tensor, coordinates: torch.Tensor, mask=None):
     likelyhood = F.grid_sample(target, coordinates).reshape(N, P, H, W)
     if mask is not None:
         likelyhood = likelyhood * \
-            F.grid_sample(mask.unsqueeze(1).type(torch.float32), coordinates).reshape(N, P, H, W)
+                     F.grid_sample(mask.unsqueeze(1).type(torch.float32), coordinates).reshape(N, P, H, W)
     return -torch.log(likelyhood.mean(2).mean(2) + 1e-8)
 
 
@@ -51,12 +51,12 @@ def offsets2coordinates(offsets: torch.Tensor, image_shape):
 
 class PointsProposalOutputs(object):
     def __init__(
-        self,
-        images,
-        pred_logits,
-        pred_offsets,
-        gt_sizes=None,
-        strides=None
+            self,
+            images,
+            pred_logits,
+            pred_offsets,
+            gt_sizes=None,
+            strides=None
     ):
         self.image_sizes = images.image_sizes
         self.pred_logits = pred_logits
@@ -77,14 +77,14 @@ class PointsProposalOutputs(object):
         assert stride > 1
         if use_grid:
             ys, xs = torch.meshgrid(
-                torch.linspace(0, size[0]-1, size[0]),
-                torch.linspace(0, size[1]-1, size[1]))
+                torch.linspace(0, size[0] - 1, size[0]),
+                torch.linspace(0, size[1] - 1, size[1]))
             grid = (torch.stack([xs, ys], 2).to(self.gt_sizes.device)) * stride
             grid = grid.view(1, *size, 2).repeat(self.gt_sizes.shape[0], 1, 1, 1)
-            
+
             gt_logit = F.grid_sample(self.gt_sizes[:, None], grid, mode="nearest")
         else:
-            gt_logit = F.interpolate(self.gt_sizes[:, None], scale_factor=1/stride, mode="nearest")
+            gt_logit = F.interpolate(self.gt_sizes[:, None], scale_factor=1 / stride, mode="nearest")
         base_gt_logit = gt_logit.eq(0).float() - 1
         gt_logit = (gt_logit > lower) * (gt_logit <= upper)
         gt_logit = gt_logit * 2 + base_gt_logit
@@ -121,8 +121,8 @@ class PointsProposalOutputs(object):
                 dim=1)
             center_points = pred_coordinates[:, 4:5]
 
-            losses["border_likely_loss_%d"%l] = border_points.sum() * 0
-            losses["center_likely_loss_%d"%l] = center_points.sum() * 0
+            losses["border_likely_loss_%d" % l] = border_points.sum() * 0
+            losses["center_likely_loss_%d" % l] = center_points.sum() * 0
 
             pred_logit = pred_logit.view(pred_logit.shape[0], -1)
             gt_logit = gt_logit.view(gt_logit.shape[0], -1)
@@ -187,7 +187,6 @@ class PointsProposalGenerator(nn.Module):
         nn.init.constant_(self.offsets.bias, 0)
         # 1x1 conv for predicting if-inside-object logits
         self.in_object_logits = nn.Conv2d(in_channels, 1, kernel_size=1, stride=1)
-
 
     def rescale(self, offsets, feature, images):
         scale_x = images.tensor.shape[-1] / feature.shape[-1]
