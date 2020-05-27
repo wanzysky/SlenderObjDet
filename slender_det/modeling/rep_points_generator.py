@@ -187,8 +187,8 @@ class RepPointsGeneratorResult():
             self.gt_labels,
             alpha=0.25,
             reduction="none")
-        neg_cls_loss, _ = cls_loss[neg_masks].topk(neg_count)
-        cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss.mean()
+        neg_cls_loss = cls_loss[neg_masks].mean()
+        cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss
         # (N, X)
         pred_bboxes = pred_bboxes.permute(0, 2, 1) / strides[None, :, None] / 4
         gt_bboxes = self.gt_boxes / strides[None, :, None] / 4
