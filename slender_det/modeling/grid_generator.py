@@ -30,7 +30,6 @@ def uniform_grid(size):
     """
     Generate uniform coordinate grid.
     """
-
     H, W = make_dual(size)
 
     grid_y, grid_x = torch.meshgrid(

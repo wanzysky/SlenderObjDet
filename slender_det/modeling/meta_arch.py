@@ -9,7 +9,7 @@ from detectron2.utils.events import get_event_storage
 
 @META_ARCH_REGISTRY.register()
 class ProposalNetworkWithMasks(ProposalNetwork):
-    masks = ["sizes"]
+    masks = []
 
     def forward(self, batched_inputs):
         """
@@ -23,8 +23,6 @@ class ProposalNetworkWithMasks(ProposalNetwork):
                 :class:`Instances` with keys "proposal_boxes" and "objectness_logits".
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
-        storage = get_event_storage()
-        storage.put_image("images", images[0])
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         features = self.backbone(images.tensor)

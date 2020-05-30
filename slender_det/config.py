@@ -7,6 +7,8 @@ _C = d2config()
 # Required by SlenderDet
 #-------------------------------------------------------------------------------#
 
+_C.DEBUG = False
+
 _C.USE_NORI = False
 _C.NEED_MASKS = False
 _C.NORI_PATH = "s3://detection/datasets/coco/"
@@ -19,6 +21,7 @@ _C.REDIS.DB = 0
 _C.MODEL.PROPOSAL_GENERATOR.IN_FEATURES = ["p5"]
 _C.MODEL.PROPOSAL_GENERATOR.NUM_POINTS = 9
 _C.MODEL.PROPOSAL_GENERATOR.SIZES = [8, 16, 32, 64, 128]
+_C.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE = "point"
 
 _C.MODEL.PROPOSAL_GENERATOR.HEAD_NAME = ""
 

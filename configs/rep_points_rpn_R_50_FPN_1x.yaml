@@ -1,6 +1,6 @@
 _BASE_: "Base-RCNN-FPN.yaml"
 MODEL:
-  META_ARCHITECTURE: "ProposalNetwork"
+  META_ARCHITECTURE: "ProposalNetworkWithMasks"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   FPN:
     NORM: "GN"
@@ -12,6 +12,7 @@ MODEL:
     IN_FEATURES: ["p2", "p3", "p4", "p5"]
     NUM_POINTS: 9
     HEAD_NAME: RepPointsInitHead
+    SAMPLE_MODE: "inside"
   RPN:
     POST_NMS_TOPK_TEST: 2000
-OUTPUT_DIR: ./train_log/rep_points_rpn_R_50_FPN_GN_1x_mean_neg
+OUTPUT_DIR: ./train_log/rep_points_rpn_R_50_FPN_GN_1x_inside_box

@@ -17,13 +17,11 @@ from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Instances
-from detectron2.utils.memory import retry_if_cuda_oom
 from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
 from detectron2.utils.registry import Registry
 from detectron2.utils.events import get_event_storage
 
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from slender_det.structures.points import pairwise_dist, stride_match
 
 
 REP_POINTS_HEAD_REGISTRY = Registry("RepPointsHead")
@@ -187,8 +185,8 @@ class RepPointsGeneratorResult():
             self.gt_labels,
             alpha=0.25,
             reduction="none")
-        neg_cls_loss = cls_loss[neg_masks].mean()
-        cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss
+        neg_cls_loss, _ = cls_loss[neg_masks].topk(neg_count)
+        cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss.mean()
         # (N, X)
         pred_bboxes = pred_bboxes.permute(0, 2, 1) / strides[None, :, None] / 4
         gt_bboxes = self.gt_boxes / strides[None, :, None] / 4
@@ -238,10 +236,21 @@ class RepPointsGenerator(nn.Module):
             False: cfg.MODEL.RPN.POST_NMS_TOPK_TEST,
         }
         self.boundary_threshold = cfg.MODEL.RPN.BOUNDARY_THRESH
+        if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
+            from .matcher import nearest_point_match
+            self.matcher = nearest_point_match
+        else:
+            assert cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'inside'
+            from .matcher import inside_match
+            self.matcher = inside_match
 
         self.init_head = build_rep_points_head(cfg, [input_shape[f] for f in self.in_features])
         
         self.strides = [input_shape[f].stride for f in self.in_features]
+        grid = uniform_grid(2048)
+        self.register_buffer("grid", grid)
+
+        self.debug = cfg.DEBUG
 
     def get_center_grid(self, features):
         point_centers = []
@@ -250,8 +259,8 @@ class RepPointsGenerator(nn.Module):
             height, width = feature.shape[2:]
             stride = self.strides[f_i]
             # HxW, 2
-            grid = uniform_grid((height, width)).view(-1, 2)
-            strides.append(torch.zeros((grid.shape[0], )) + stride)
+            grid = self.grid[:height, :width].reshape(-1, 2)
+            strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
             point_centers.append(grid * stride)
         return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
 
@@ -292,24 +301,8 @@ class RepPointsGenerator(nn.Module):
             image_size_i: (h, w) for the i-th image
             gt_boxes_i: ground-truth boxes for i-th image
             """
-            objectness_label = torch.zeros_like(centers[:, 0])
-            bbox_label = torch.zeros((centers.size(0), 4), dtype=torch.float32).to(centers.device)
 
-            distance_matrix = retry_if_cuda_oom(pairwise_dist)(centers, gt_boxes_i)
-            level_match_matrix = retry_if_cuda_oom(stride_match)(strides, gt_boxes_i)
-            distance_matrix = distance_matrix + ~level_match_matrix * 1e5
-            # Shpae(M), indicating the nearest point of each object center, where M is the number of boxes.
-            gt_min_dists, gt_min_idxs = distance_matrix.min(0)
-            # Shpae(P), indicating the nearest object center of each point, where P is the number of points.
-            point_min_dists, _ = distance_matrix.min(1)
-            # Shape(M). 1 indicates bboxes failed in competing its nearest point with other bboxes.
-            mask_gt_valid = point_min_dists.gather(0, gt_min_idxs) < gt_min_dists
-            # TODO: Change to batched operation.
-            for bbox_idx, (mask, point_idx) in enumerate(zip(mask_gt_valid, gt_min_idxs)):
-                if mask:
-                    continue
-                objectness_label[point_idx] = 1
-                bbox_label[point_idx] = gt_boxes_i.tensor[bbox_idx]
+            objectness_label, bbox_label = self.matcher(centers, strides, gt_boxes_i)
             objecness_labels.append(objectness_label)
             bbox_labels.append(bbox_label)
         return torch.stack(objecness_labels, dim=0), torch.stack(bbox_labels, dim=0)
@@ -332,6 +325,7 @@ class RepPointsGenerator(nn.Module):
         features = [features[f] for f in self.in_features]
 
         pred_objectness_logits, pred_deltas = self.init_head(features)
+        torch.cuda.synchronize()
 
         point_centers, strides = self.get_center_grid(features)
         point_centers = point_centers.to(pred_deltas[0].device)
@@ -355,6 +349,27 @@ class RepPointsGenerator(nn.Module):
         else:
             losses = {}
 
+        proposals = outputs.predict_proposals()
+        logits = outputs.predict_objectness_logits()
+        if self.debug:
+            storage = get_event_storage()
+            start = 0
+            for i, f in enumerate(features):
+                h, w = f.shape[-2:]
+                centers = point_centers[start:start+h*w].view(h, w, 2)
+                stride = strides[start:start+h*w].view(h, w)
+                storage.put_image("centers_x-%d"%i, (centers[..., 0:1]/centers[..., 0:1].max()).permute(2, 0, 1))
+                storage.put_image("centers_y-%d"%i, (centers[..., 1:]/centers[..., 1:].max()).permute(2, 0, 1))
+                storage.put_image("strides-%d"%i, (stride[None]/64).float())
+
+                gt_label = gt_labels[0, start:start+h*w].view(1, h, w)
+                storage.put_image("gt-labels-%d"%i, gt_label.float())
+
+                storage.put_image("pred-logits-%d"%i, torch.sigmoid(logits[i][0].view(1, h, w)))
+
+                start += h*w
+            # storage.clear_images()
+
         with torch.no_grad():
             # Find the top proposals by applying NMS and removing boxes that
             # are too small. The proposals are treated as fixed for approximate
@@ -362,8 +377,8 @@ class RepPointsGenerator(nn.Module):
             # w.r.t. the proposal boxes’ coordinates that are also network
             # responses, so is approximate.
             proposals = find_top_rpn_proposals(
-                outputs.predict_proposals(),
-                outputs.predict_objectness_logits(),
+                proposals,
+                logits,
                 images,
                 self.nms_thresh,
                 self.pre_nms_topk[self.training],
