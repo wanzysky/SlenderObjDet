@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
-from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
+from detectron2.modeling.proposal_generator.proposal_utils import find_top_rpn_proposals
 from detectron2.utils.events import get_event_storage
 
 

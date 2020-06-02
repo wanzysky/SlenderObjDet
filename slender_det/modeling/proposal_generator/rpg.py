@@ -17,12 +17,11 @@ from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Instances
-from detectron2.modeling.proposal_generator.proposal_utils import find_top_rpn_proposals
+from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
 from detectron2.utils.registry import Registry
 from detectron2.utils.events import get_event_storage
 
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-
 
 REP_POINTS_HEAD_REGISTRY = Registry("RepPointsHead")
 REP_POINTS_HEAD_REGISTRY.__doc__ = """
@@ -104,7 +103,7 @@ class RepPointsInitHead(nn.Module):
             deltas.append(self.deltas(x))
         return objectness_logits, deltas
 
-    def points2bbox(self, base_grids:torch.Tensor, deltas:List[torch.Tensor]):
+    def points2bbox(self, base_grids: torch.Tensor, deltas: List[torch.Tensor]):
         bboxes = []
         H_i, W_i = float("inf"), float("inf")
         start = 0
@@ -118,9 +117,9 @@ class RepPointsInitHead(nn.Module):
             assert delta.size(-1) < W_i
             H_i, W_i = delta.shape[-2:]
             # (1, 2, H_i, W_i), grid for this feature level.
-            base_grid = base_grids[start:start+H_i*W_i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
+            base_grid = base_grids[start:start + H_i * W_i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
             start += H_i * W_i
-            
+
             # (N*9, 2, H_i, W_i)
             delta = delta.view(-1, 9, 2, H_i, W_i).view(-1, 2, H_i, W_i)
             # (N, 9, 2, H_i, W_i)
@@ -131,14 +130,14 @@ class RepPointsInitHead(nn.Module):
             points_std = torch.std(points - points_mean, dim=1, keepdim=True)
             # (2)
             moment_transfer = (self.moment_transfer * self.moment_mul) + (
-                self.moment_transfer.detach() * (1 - self.moment_mul))
+                    self.moment_transfer.detach() * (1 - self.moment_mul))
             half_shape = points_std * torch.exp(moment_transfer)[None, None, :, None, None]
             # (N, 4, H_i, W_i)
             bbox = torch.cat(
                 [points_mean[:, :, 0] - half_shape[:, :, 0],
-                points_mean[:, :, 1] - half_shape[:, :, 1],
-                points_mean[:, :, 0] + half_shape[:, :, 0],
-                points_mean[:, :, 1] + half_shape[:, :, 1]],
+                 points_mean[:, :, 1] - half_shape[:, :, 1],
+                 points_mean[:, :, 0] + half_shape[:, :, 0],
+                 points_mean[:, :, 1] + half_shape[:, :, 1]],
                 dim=1)
             bboxes.append(bbox)
         return bboxes
@@ -146,11 +145,11 @@ class RepPointsInitHead(nn.Module):
 
 class RepPointsGeneratorResult():
     def __init__(
-        self, 
-        pred_objectness_logits,
-        pred_bboxes,
-        gt_labels=None,
-        gt_boxes=None):
+            self,
+            pred_objectness_logits,
+            pred_bboxes,
+            gt_labels=None,
+            gt_boxes=None):
         """
         Args:
             pred_objectness_logits (list[Tensor]): A list of L elements.
@@ -217,13 +216,13 @@ class RepPointsGenerator(nn.Module):
         super().__init__()
 
         # fmt: off
-        self.min_box_side_len     = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE
-        self.in_features          = cfg.MODEL.RPN.IN_FEATURES
-        self.nms_thresh           = cfg.MODEL.RPN.NMS_THRESH
+        self.min_box_side_len = cfg.MODEL.PROPOSAL_GENERATOR.MIN_SIZE
+        self.in_features = cfg.MODEL.RPN.IN_FEATURES
+        self.nms_thresh = cfg.MODEL.RPN.NMS_THRESH
         self.batch_size_per_image = cfg.MODEL.RPN.BATCH_SIZE_PER_IMAGE
-        self.positive_fraction    = cfg.MODEL.RPN.POSITIVE_FRACTION
-        self.smooth_l1_beta       = cfg.MODEL.RPN.SMOOTH_L1_BETA
-        self.loss_weight          = cfg.MODEL.RPN.LOSS_WEIGHT
+        self.positive_fraction = cfg.MODEL.RPN.POSITIVE_FRACTION
+        self.smooth_l1_beta = cfg.MODEL.RPN.SMOOTH_L1_BETA
+        self.loss_weight = cfg.MODEL.RPN.LOSS_WEIGHT
         # fmt: on
 
         # Map from self.training state to train/test settings
@@ -245,7 +244,7 @@ class RepPointsGenerator(nn.Module):
             self.matcher = inside_match
 
         self.init_head = build_rep_points_head(cfg, [input_shape[f] for f in self.in_features])
-        
+
         self.strides = [input_shape[f].stride for f in self.in_features]
         grid = uniform_grid(2048)
         self.register_buffer("grid", grid)
@@ -260,7 +259,7 @@ class RepPointsGenerator(nn.Module):
             stride = self.strides[f_i]
             # HxW, 2
             grid = self.grid[:height, :width].reshape(-1, 2)
-            strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
+            strides.append(torch.full((grid.shape[0],), stride, device=grid.device))
             point_centers.append(grid * stride)
         return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
 
@@ -339,10 +338,10 @@ class RepPointsGenerator(nn.Module):
             gt_labels, gt_boxes = None, None
 
         outputs = RepPointsGeneratorResult(
-                pred_objectness_logits,
-                pred_boxes,
-                gt_labels,
-                gt_boxes)
+            pred_objectness_logits,
+            pred_boxes,
+            gt_labels,
+            gt_boxes)
 
         if self.training:
             losses = {k: v * self.loss_weight for k, v in outputs.losses(strides).items()}
@@ -356,18 +355,18 @@ class RepPointsGenerator(nn.Module):
             start = 0
             for i, f in enumerate(features):
                 h, w = f.shape[-2:]
-                centers = point_centers[start:start+h*w].view(h, w, 2)
-                stride = strides[start:start+h*w].view(h, w)
-                storage.put_image("centers_x-%d"%i, (centers[..., 0:1]/centers[..., 0:1].max()).permute(2, 0, 1))
-                storage.put_image("centers_y-%d"%i, (centers[..., 1:]/centers[..., 1:].max()).permute(2, 0, 1))
-                storage.put_image("strides-%d"%i, (stride[None]/64).float())
+                centers = point_centers[start:start + h * w].view(h, w, 2)
+                stride = strides[start:start + h * w].view(h, w)
+                storage.put_image("centers_x-%d" % i, (centers[..., 0:1] / centers[..., 0:1].max()).permute(2, 0, 1))
+                storage.put_image("centers_y-%d" % i, (centers[..., 1:] / centers[..., 1:].max()).permute(2, 0, 1))
+                storage.put_image("strides-%d" % i, (stride[None] / 64).float())
 
-                gt_label = gt_labels[0, start:start+h*w].view(1, h, w)
-                storage.put_image("gt-labels-%d"%i, gt_label.float())
+                gt_label = gt_labels[0, start:start + h * w].view(1, h, w)
+                storage.put_image("gt-labels-%d" % i, gt_label.float())
 
-                storage.put_image("pred-logits-%d"%i, torch.sigmoid(logits[i][0].view(1, h, w)))
+                storage.put_image("pred-logits-%d" % i, torch.sigmoid(logits[i][0].view(1, h, w)))
 
-                start += h*w
+                start += h * w
             # storage.clear_images()
 
         with torch.no_grad():
