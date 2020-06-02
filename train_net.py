@@ -39,12 +39,9 @@ from detectron2.evaluation import (
 from detectron2.modeling import GeneralizedRCNNWithTTA
 
 from slender_det.modeling.points_proposal_generator import PointsProposalGenerator
-<<<<<<< HEAD
 from slender_det.modeling.rep_points_generator import RepPointsGenerator
 from slender_det.modeling.meta_arch import ProposalNetworkWithMasks
-=======
 from slender_det.modeling.meta_arch import build_model
->>>>>>> cym
 from slender_det.data import BorderMaskMapper
 from slender_det.config import get_cfg
 
@@ -59,8 +56,6 @@ class Trainer(DefaultTrainer):
     """
 
     @classmethod
-<<<<<<< HEAD
-=======
     def build_train_loader(cls, cfg):
         """
         Returns:
@@ -86,7 +81,6 @@ class Trainer(DefaultTrainer):
         return model
 
     @classmethod
->>>>>>> cym
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """
         Create evaluator(s) for a given dataset.
