@@ -111,7 +111,7 @@ def get_sample_region(gt, strides, num_points_per, gt_xs, gt_ys, radius=1.0):
 
 def compute_targets_for_locations(
         locations, targets, object_sizes_of_interest,
-        strides, num_points_per_level, center_sampling_radius
+        strides, num_points_per_level, center_sampling_radius, num_classes
 ):
     labels = []
     reg_targets = []
@@ -154,7 +154,8 @@ def compute_targets_for_locations(
 
         reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
         labels_per_im = labels_per_im[locations_to_gt_inds]
-        labels_per_im[locations_to_min_area == INF] = 0
+        # NOTE: set background labels to NUM_CLASSES not 0
+        labels_per_im[locations_to_min_area == INF] = num_classes
 
         labels.append(labels_per_im)
         reg_targets.append(reg_targets_per_im)
@@ -190,6 +191,7 @@ class FCOS(nn.Module):
         self.iou_loss_type = cfg.MODEL.FCOS.IOU_LOSS_TYPE
 
         # Inference parameters:
+        self.score_thresh = 0.3
         self.pre_nms_thresh = cfg.MODEL.FCOS.INFERENCE_TH
         self.pre_nms_top_n = cfg.MODEL.FCOS.PRE_NMS_TOP_N
         self.nms_thresh = cfg.MODEL.FCOS.NMS_TH
@@ -246,19 +248,9 @@ class FCOS(nn.Module):
             return losses
         else:
             results = self.inference(locations, box_cls, box_regression, centerness, images.image_sizes)
-            processed_results = []
-            for results_per_image, input_per_image, image_size in zip(
-                    results, batched_inputs, images.image_sizes
-            ):
-                keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
-                keep = keep[: self.max_detections_per_image]
-                results_per_image = results_per_image[keep]
+            results = self.postprocess(results, batched_inputs, images.image_sizes)
 
-                height = input_per_image.get("height", image_size[0])
-                width = input_per_image.get("width", image_size[1])
-                r = detector_postprocess(results_per_image, height, width)
-                processed_results.append({"instances": r})
-            return processed_results
+            return results
 
     def losses(self, labels, reg_targets, box_cls, box_regression, centerness):
         N, num_classes = box_cls[0].shape[:2]
@@ -281,7 +273,9 @@ class FCOS(nn.Module):
         labels_flatten = torch.cat(labels_flatten, dim=0)
         reg_targets_flatten = torch.cat(reg_targets_flatten, dim=0)
 
-        pos_inds = torch.nonzero(labels_flatten > 0).squeeze(1)
+        pos_inds = torch.nonzero(
+            (labels_flatten >= 0) & (labels_flatten != self.num_classes)
+        ).squeeze(1)
 
         box_regression_flatten = box_regression_flatten[pos_inds]
         reg_targets_flatten = reg_targets_flatten[pos_inds]
@@ -298,7 +292,7 @@ class FCOS(nn.Module):
 
         cls_loss = sigmoid_focal_loss_jit(
             box_cls_flatten, gt_classes_target,
-            alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, 
+            alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma,
             reduction="sum",
         ) / num_pos_avg_per_gpu
 
@@ -353,7 +347,7 @@ class FCOS(nn.Module):
             points_all_level, gt_instances,
             expanded_object_sizes_of_interest,
             self.fpn_strides, self.num_points_per_level,
-            self.center_sampling_radius
+            self.center_sampling_radius, self.num_classes
         )
         for i in range(len(labels)):
             labels[i] = torch.split(labels[i], num_points_per_level, dim=0)
@@ -377,32 +371,16 @@ class FCOS(nn.Module):
 
         return labels_level_first, reg_targets_level_first
 
-    def compute_locations(self, features):
-        locations = []
-        for level, feature in enumerate(features):
-            h, w = feature.size()[-2:]
-            locations_per_level = compute_locations_per_level(
-                h, w, self.fpn_strides[level],
-                feature.device
-            )
-            locations.append(locations_per_level)
-        return locations
-
     def inference(self, locations, box_cls, box_regression, centerness, image_sizes):
         results = []
         for _, (l, o, b, c) in enumerate(zip(locations, box_cls, box_regression, centerness)):
             results.append(
-                self.inference_single_feature_map(
-                    l, o, b, c, image_sizes
-                )
+                self.inference_single_feature_map(l, o, b, c, image_sizes)
             )
 
         results = list(zip(*results))
         results = [Instances.cat(_) for _ in results]
-        if do_postprocess:
-            return self.postprocess(results, batched_inputs, images.image_sizes)
-        else:
-            return results
+        return results
 
     def inference_single_feature_map(self, locations, box_cls, box_regression, centerness, image_sizes):
         N, C, H, W = box_cls.shape
@@ -430,7 +408,7 @@ class FCOS(nn.Module):
 
             per_candidate_nonzeros = per_candidate_inds.nonzero()
             per_box_loc = per_candidate_nonzeros[:, 0]
-            per_class = per_candidate_nonzeros[:, 1] + 1
+            per_class = per_candidate_nonzeros[:, 1]
 
             per_box_regression = box_regression[i]
             per_box_regression = per_box_regression[per_box_loc]
@@ -469,19 +447,12 @@ class FCOS(nn.Module):
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
-            boxes = results_per_image.pred_boxes
+            boxes = results_per_image.pred_boxes.tensor
             scores = results_per_image.scores
             class_idxs = results_per_image.pred_classes
 
-            # Filter results based on detection scores
-            keep = scores > self.score_thresh
-            boxes = boxes[keep]
-            scores = scores[keep]
-            class_idxs = class_idxs[keep]
-            results_per_image = results_per_image[keep]
-
             # Apply per-class nms for each image
-            keep = batched_nms(boxes, scores, class_idxs, self.nms_threshold)
+            keep = batched_nms(boxes, scores, class_idxs, self.nms_thresh)
             keep = keep[: self.max_detections_per_image]
             results_per_image = results_per_image[keep]
 
@@ -489,6 +460,7 @@ class FCOS(nn.Module):
             width = input_per_image.get("width", image_size[1])
             r = detector_postprocess(results_per_image, height, width)
             processed_results.append({"instances": r})
+
         return processed_results
 
     def preprocess_image(self, batched_inputs):
@@ -511,7 +483,7 @@ class FCOSHead(torch.nn.Module):
         # TODO: Implement the sigmoid version first.
         # fmt: off
         in_channels = input_shape[0].channels
-        num_classes = cfg.MODEL.FCOS.NUM_CLASSES - 1
+        num_classes = cfg.MODEL.FCOS.NUM_CLASSES
         self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES
         self.norm_reg_targets = cfg.MODEL.FCOS.NORM_REG_TARGETS
         self.centerness_on_reg = cfg.MODEL.FCOS.CENTERNESS_ON_REG

@@ -22,7 +22,8 @@ _C.MODEL.PROPOSAL_GENERATOR.SIZES = [8, 16, 32, 64, 128]
 # FCOS Options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.FCOS = CN()
-_C.MODEL.FCOS.NUM_CLASSES = 81  # the number of classes including background
+# the number of classes excluding background
+_C.MODEL.FCOS.NUM_CLASSES = 80
 _C.MODEL.FCOS.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
 _C.MODEL.FCOS.FPN_STRIDES = [8, 16, 32, 64, 128]
 _C.MODEL.FCOS.PRIOR_PROB = 0.01
