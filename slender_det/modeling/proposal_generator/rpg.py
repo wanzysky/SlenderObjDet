@@ -14,10 +14,10 @@ from torch import nn
 import torch.nn.functional as F
 from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 
-from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.layers import ShapeSpec
+from detectron2.modeling import PROPOSAL_GENERATOR_REGISTRY
 from detectron2.structures import Instances
-from detectron2.modeling.proposal_generator.rpn_outputs import find_top_rpn_proposals
+from detectron2.modeling.proposal_generator.proposal_utils import find_top_rpn_proposals
 from detectron2.utils.registry import Registry
 from detectron2.utils.events import get_event_storage
 
@@ -143,13 +143,8 @@ class RepPointsInitHead(nn.Module):
         return bboxes
 
 
-class RepPointsGeneratorResult():
-    def __init__(
-            self,
-            pred_objectness_logits,
-            pred_bboxes,
-            gt_labels=None,
-            gt_boxes=None):
+class RepPointsGeneratorResult(object):
+    def __init__(self, pred_objectness_logits, pred_bboxes, gt_labels=None, gt_boxes=None):
         """
         Args:
             pred_objectness_logits (list[Tensor]): A list of L elements.
@@ -169,10 +164,10 @@ class RepPointsGeneratorResult():
     def losses(self, strides):
         # (N, X)
         pred_objectness_logits = torch.cat(
-            [p.view(p.size(0), -1) for p in self.pred_objectness_logits], dim=1)
+            [p.view(p.size(0), -1) for p in self.pred_objectness_logits], dim=1
+        )
         # (N, X, 4)
-        pred_bboxes = torch.cat(
-            [p.view(p.size(0), 4, -1) for p in self.pred_bboxes], dim=2)
+        pred_bboxes = torch.cat([p.view(p.size(0), 4, -1) for p in self.pred_bboxes], dim=2)
 
         pos_masks = self.gt_labels > 0
         pos_count = pos_masks.sum()
@@ -183,7 +178,8 @@ class RepPointsGeneratorResult():
             pred_objectness_logits,
             self.gt_labels,
             alpha=0.25,
-            reduction="none")
+            reduction="none"
+        )
         neg_cls_loss, _ = cls_loss[neg_masks].topk(neg_count)
         cls_loss = cls_loss[pos_masks].mean() + neg_cls_loss.mean()
         # (N, X)
@@ -193,8 +189,12 @@ class RepPointsGeneratorResult():
             pred_bboxes[pos_masks],
             gt_bboxes[pos_masks],
             0.11,
-            reduction="mean")
-        return {"cls_loss": cls_loss, "localization_loss": localization_loss}
+            reduction="mean"
+        )
+        return {
+            "cls_loss": cls_loss,
+            "localization_loss": localization_loss
+        }
 
     def predict_proposals(self):
         return [p.view(p.size(0), 4, -1).permute(0, 2, 1) for p in self.pred_bboxes]
@@ -341,7 +341,8 @@ class RepPointsGenerator(nn.Module):
             pred_objectness_logits,
             pred_boxes,
             gt_labels,
-            gt_boxes)
+            gt_boxes
+        )
 
         if self.training:
             losses = {k: v * self.loss_weight for k, v in outputs.losses(strides).items()}

@@ -38,7 +38,7 @@ from detectron2.evaluation import (
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
 
-from slender_det.modeling.meta_arch import build_model
+from slender_det.modeling import build_model
 from slender_det.config import get_cfg
 
 
