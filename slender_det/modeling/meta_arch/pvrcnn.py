@@ -55,23 +55,24 @@ class ProposalVisibleRCNN(GeneralizedRCNN):
         # note: private function; subject to changes
         processed_results = []
         for results_per_image, proposal_per_image, input_per_image, image_size in zip(
-            instances, proposals, batched_inputs, image_sizes
+                instances, proposals, batched_inputs, image_sizes
         ):
             height = input_per_image.get("height", image_size[0])
             width = input_per_image.get("width", image_size[1])
             r = detector_postprocess(results_per_image, height, width)
-            processed_results.append({"instances": r, "proposals": detector_postprocess(proposal_per_image, height, width)})
+            processed_results.append(
+                {"instances": r, "proposals": detector_postprocess(proposal_per_image, height, width)})
         return processed_results
 
 
 @ROI_HEADS_REGISTRY.register()
 class ProposalVisibleHead(StandardROIHeads):
     def forward(
-        self,
-        images: ImageList,
-        features: Dict[str, torch.Tensor],
-        proposals: List[Instances],
-        targets: Optional[List[Instances]] = None,
+            self,
+            images: ImageList,
+            features: Dict[str, torch.Tensor],
+            proposals: List[Instances],
+            targets: Optional[List[Instances]] = None,
     ) -> Tuple[List[Instances], Dict[str, torch.Tensor]]:
         """
         See :class:`ROIHeads.forward`.

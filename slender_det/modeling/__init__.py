@@ -1,6 +1,7 @@
 from .meta_arch import (
     FCOS,
     ProposalNetworkWithMasks,
+    ProposalVisibleRCNN,
     build_model,
 )
 
