@@ -8,4 +8,6 @@ from .meta_arch import (
 from .proposal_generator import (
     PointsProposalGenerator,
     RepPointsGenerator,
+    RPNWithAnchor,
+    find_top_rpn_proposals_anchors,
 )

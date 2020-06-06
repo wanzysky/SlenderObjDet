@@ -5,6 +5,8 @@ MODEL:
   MASK_ON: False
   RESNETS:
     DEPTH: 50
+  PROPOSAL_GENERATOR:
+    NAME: RPNWithAnchor
   RPN:
     POST_NMS_TOPK_TEST: 2000
 OUTPUT_DIR: ./train_log/rpn_R_50_FPN_1x

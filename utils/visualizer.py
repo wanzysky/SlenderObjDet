@@ -7,7 +7,6 @@ import cv2
 from detectron2.utils.visualizer import Visualizer as D2Visualizer
 from detectron2.utils.visualizer import VisImage
 from detectron2.structures import Boxes, BoxMode, Instances
-from neupeak.utils import webcv2
 
 from concern.support import between, all_the_same
 
