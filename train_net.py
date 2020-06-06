@@ -41,9 +41,9 @@ from detectron2.modeling import GeneralizedRCNNWithTTA
 from slender_det.modeling import build_model
 from slender_det.data import BorderMaskMapper
 from slender_det.config import get_cfg
-
-
 from slender_det.evaluation.coco_evaluation_with_anchors import COCOEvaluatorWithAnchors
+
+
 class Trainer(DefaultTrainer):
     """
     We use the "DefaultTrainer" which contains pre-defined default logic for

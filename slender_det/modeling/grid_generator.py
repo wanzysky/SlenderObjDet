@@ -22,7 +22,6 @@ def zero_center_grid(size):
         torch.linspace(-h, h, H), 
         torch.linspace(-w, w, W)
     )
-    # h, w, 2
     return torch.stack([grid_x, grid_y], axis=2)
 
 

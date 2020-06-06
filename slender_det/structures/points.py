@@ -40,6 +40,6 @@ def stride_match(strides: torch.Tensor, boxes: Boxes, maximum=64):
         2,
         ((torch.log2(box_wh[:, 0]) +\
             torch.log2(box_wh[:, 1])) / 2).int(),
-    ).clamp(4, 64)
+    ).clamp(strides.min(), strides.max())
     matched_matrix = torch.eq(strides[:, None], box_strides[None])
     return matched_matrix

@@ -2,6 +2,7 @@ from .meta_arch import (
     FCOS,
     ProposalNetworkWithMasks,
     ProposalVisibleRCNN,
+    RepPointsDetector,
     build_model,
     RetinaNetWithAnchor,
     FCOSWithAnchor,

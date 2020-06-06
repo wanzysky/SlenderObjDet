@@ -1,0 +1,18 @@
+_BASE_: "./Base-RetinaNet.yaml"
+MODEL:
+  META_ARCHITECTURE: "RepPointsDetector"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  RESNETS:
+    OUT_FEATURES: ["res2", "res3", "res4", "res5"]
+  FPN:
+    IN_FEATURES: ["res2", "res3", "res4", "res5"]
+  FPN:
+    NORM: "GN"
+  PROPOSAL_GENERATOR:
+    SAMPLE_MODE: "points"
+SOLVER:
+  WARMUP_FACTOR: 0.33
+
+OUTPUT_DIR: ./train_log/rep_points_detector_R_50_FPN_GN_1x_nearest_points
