@@ -1,10 +1,14 @@
-import torch
+import os
+import copy
+from collections import OrderedDict
 
+import torch
+from fvcore.common.file_io import PathManager
+
+import detectron2.utils.comm as comm
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.evaluation import COCOEvaluator as Base
-from detectron2.evaluation.coco_evaluation import (
-    PathManager,
-)
+from detectron2.utils.logger import create_small_table
 
 
 class COCOEvaluator(Base):
@@ -48,7 +52,7 @@ class COCOEvaluator(Base):
         limits = [100]
         for limit in limits:
             for aspect_ratio, suffix in aspect_ratios.items():
-                stats = evaluate_box_proposal(predictions, self._coco_api, aspect_ratio=aspect_ratio, limit=limit)
+                stats = _evaluate_predictions_ar(predictions, self._coco_api, aspect_ratio=aspect_ratio, limit=limit)
                 key = "AR{}@{:d}".format(suffix, limit)
                 res[key] = float(stats["ar"].item() * 100)
 
