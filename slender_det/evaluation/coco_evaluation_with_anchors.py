@@ -1,5 +1,3 @@
-from detectron2.evaluation.coco_evaluation import COCOEvaluator, _evaluate_box_proposals
-
 import contextlib
 import copy
 import io
@@ -10,18 +8,23 @@ import numpy as np
 import os
 import pickle
 from collections import OrderedDict
-import pycocotools.mask as mask_util
+from tabulate import tabulate
+
 import torch
 from fvcore.common.file_io import PathManager
+
+import pycocotools.mask as mask_util
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
-from tabulate import tabulate
 
 import detectron2.utils.comm as comm
 from detectron2.data import MetadataCatalog
 from detectron2.data.datasets.coco import convert_to_coco_json
+from detectron2.evaluation.coco_evaluation import COCOEvaluator, _evaluate_box_proposals
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.logger import create_small_table
+
+
 class COCOEvaluatorWithAnchors(COCOEvaluator):
     def _eval_box_proposals(self, predictions):
         """
@@ -63,7 +66,6 @@ class COCOEvaluatorWithAnchors(COCOEvaluator):
                 res[key] = float(stats["ar"].item() * 100)
         self._logger.info("Proposal metrics: \n" + create_small_table(res))
         self._results["box_proposals"] = res
-
 
     def process(self, inputs, outputs):
         """
