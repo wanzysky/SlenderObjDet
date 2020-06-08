@@ -87,6 +87,7 @@ class COCOEvaluatorWithAnchors(COCOEvaluator):
                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
             self._predictions.append(prediction)
 
+
 def instances_to_coco_json_with_anchor(instances, img_id):
     """
     Dump an "Instances" object to a COCO-format json that's used for evaluation.
