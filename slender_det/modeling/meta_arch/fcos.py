@@ -10,11 +10,11 @@ from fvcore.nn import sigmoid_focal_loss_jit
 
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.structures import ImageList, Instances, Boxes
-from detectron2.layers import ShapeSpec, batched_nms, DeformConv
+from detectron2.layers import ShapeSpec, batched_nms
 from detectron2.modeling.postprocessing import detector_postprocess
 
 from ..backbone import build_backbone
-from ...layers import Scale, iou_loss
+from ...layers import Scale, iou_loss, DFConv2d
 
 INF = 100000000
 
@@ -488,55 +488,57 @@ class FCOSHead(torch.nn.Module):
         self.norm_reg_targets = cfg.MODEL.FCOS.NORM_REG_TARGETS
         self.centerness_on_reg = cfg.MODEL.FCOS.CENTERNESS_ON_REG
         self.use_dcn_in_tower = cfg.MODEL.FCOS.USE_DCN_IN_TOWER
+        self.use_dcn_v2 = cfg.MODEL.FCOS.USE_DCN_V2
         # fmt: on
 
         cls_tower = []
         bbox_tower = []
         for i in range(cfg.MODEL.FCOS.NUM_CONVS):
+            use_dcn = False
+            use_v2 = True
             if self.use_dcn_in_tower and i == cfg.MODEL.FCOS.NUM_CONVS - 1:
-                conv_func = DeformConv
+                conv_func = DFConv2d
+                bias = False
+                use_dcn = True
+                if not self.use_dcn_v2:
+                    use_v2 = False
             else:
                 conv_func = nn.Conv2d
+                bias = True
 
-            cls_tower.append(
-                conv_func(
-                    in_channels,
-                    in_channels,
-                    kernel_size=3,
-                    stride=1,
-                    padding=1,
-                    bias=True
+            if use_dcn and not use_v2:
+                cls_tower.append(
+                    conv_func(
+                        in_channels, in_channels,
+                        with_modulated_dcn=False, kernel_size=3, stride=1, padding=1, bias=bias
+                    )
                 )
-            )
+            else:
+                cls_tower.append(
+                    conv_func(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+                )
             cls_tower.append(nn.GroupNorm(32, in_channels))
             cls_tower.append(nn.ReLU())
-            bbox_tower.append(
-                conv_func(
-                    in_channels,
-                    in_channels,
-                    kernel_size=3,
-                    stride=1,
-                    padding=1,
-                    bias=True
+
+            if use_dcn and not use_v2:
+                bbox_tower.append(
+                    conv_func(
+                        in_channels, in_channels,
+                        with_modulated_dcn=False, kernel_size=3, stride=1, padding=1, bias=bias
+                    )
                 )
-            )
+            else:
+                bbox_tower.append(
+                    conv_func(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+                )
             bbox_tower.append(nn.GroupNorm(32, in_channels))
             bbox_tower.append(nn.ReLU())
 
         self.add_module('cls_tower', nn.Sequential(*cls_tower))
         self.add_module('bbox_tower', nn.Sequential(*bbox_tower))
-        self.cls_logits = nn.Conv2d(
-            in_channels, num_classes, kernel_size=3, stride=1,
-            padding=1
-        )
-        self.bbox_pred = nn.Conv2d(
-            in_channels, 4, kernel_size=3, stride=1,
-            padding=1
-        )
-        self.centerness = nn.Conv2d(
-            in_channels, 1, kernel_size=3, stride=1,
-            padding=1
-        )
+        self.cls_logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
+        self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
+        self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
 
         # initialization
         for modules in [self.cls_tower, self.bbox_tower,

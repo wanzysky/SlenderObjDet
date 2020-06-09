@@ -1,0 +1,11 @@
+_BASE_: "Base-Fcos.yaml"
+MODEL:
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  FCOS:
+    # we only use dcn in the last layer of towers
+    USE_DCN_IN_TOWER: True
+SOLVER:
+  STEPS: (120000, 160000)
+  MAX_ITER: 180000
