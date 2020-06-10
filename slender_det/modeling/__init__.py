@@ -3,6 +3,9 @@ from .meta_arch import (
     ProposalNetworkWithMasks,
     ProposalVisibleRCNN,
     build_model,
+    RetinaNetWithAnchor,
+    FCOSWithAnchor,
+    ProposalVisibleRCNNWithAnchor,
 )
 
 from .proposal_generator import (
@@ -10,4 +13,8 @@ from .proposal_generator import (
     RepPointsGenerator,
     RPNWithAnchor,
     find_top_rpn_proposals_anchors,
+)
+
+from .roi_heads import (
+    ProposalVisibleHeadWithAnchor,
 )

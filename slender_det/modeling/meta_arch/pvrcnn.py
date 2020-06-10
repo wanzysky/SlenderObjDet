@@ -30,6 +30,8 @@ class ProposalVisibleRCNN(GeneralizedRCNN):
 
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
+        
+        
 
         if detected_instances is None:
             if self.proposal_generator:
@@ -42,13 +44,11 @@ class ProposalVisibleRCNN(GeneralizedRCNN):
         else:
             detected_instances = [x.to(self.device) for x in detected_instances]
             results = self.roi_heads.forward_with_given_boxes(features, detected_instances)
-
         if do_postprocess:
-            results = ProposalVisibleRCNN._postprocess(results, proposals, batched_inputs, images.image_sizes)
+            results = self._postprocess(results, proposals, batched_inputs, images.image_sizes)
         return results
 
-    @staticmethod
-    def _postprocess(instances, proposals, batched_inputs, image_sizes):
+    def _postprocess(self, instances, proposals, batched_inputs, image_sizes):
         """
         Rescale the output instances to the target size.
         """
