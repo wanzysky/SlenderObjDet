@@ -143,4 +143,4 @@ def main(predictions_file_path, json_file="datasets/coco/annotations/instances_v
 
 
 if __name__ == '__main__':
-    fire.Fire()
+    fire.Fire(main)
