@@ -1,0 +1,7 @@
+_BASE_: "../../fcos/Base-Fcos.yaml"
+MODEL:
+  RESNETS:
+    DEPTH: 50
+  META_ARCHITECTURE: FCOSWithAnchor
+
+OUTPUT_DIR: ./train_log/fcos/R_50_FPN/1x

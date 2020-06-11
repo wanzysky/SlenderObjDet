@@ -1,0 +1,7 @@
+_BASE_: "../../retina/Base-RetinaNet.yaml"
+MODEL:
+  META_ARCHITECTURE: RetinaNetWithAnchor
+  RESNETS:
+    DEPTH: 50
+
+OUTPUT_DIR: ./train_log/retinanet/R_50_FPN/1x

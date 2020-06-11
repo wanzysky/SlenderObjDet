@@ -1,17 +1,20 @@
 import math
+from collections import defaultdict
 
 import numpy as np
 import matplotlib as mpl
 import cv2
+import torch
 
 from detectron2.utils.visualizer import Visualizer as D2Visualizer
 from detectron2.utils.visualizer import ColorMode, _create_text_labels, _SMALL_OBJECT_AREA_THRESH
 from detectron2.utils.visualizer import VisImage
 from detectron2.structures import Boxes, BoxMode, Instances
-
-from concern.support import between, all_the_same
-import torch
 from detectron2.utils.colormap import random_color
+from detectron2.structures.boxes import pairwise_iou
+
+from concern.support import between, all_the_same, any_of
+
 
 class Visualizer(D2Visualizer):
     def __init__(self, img_rgb, metadata, scale=1.0, instance_mode=ColorMode.IMAGE):
@@ -41,12 +44,11 @@ class Visualizer(D2Visualizer):
             num_rows = int(math.ceil(num_items / num_colums))
         elif num_colums is None:
             num_colums = int(math.ceil(num_items / num_rows))
-        
 
         canvas = np.zeros_like(images[0])
         if min_side is not None:
             assert out_shape is None, "out_shape has been specified"
-            ratio = (canvas.shape[0]*num_rows) / (canvas.shape[1]*num_colums)
+            ratio = (canvas.shape[0] * num_rows) / (canvas.shape[1] * num_colums)
             if ratio < 1:
                 out_shape = (min_side, int(min_side / ratio + 0.5))
             else:
@@ -54,7 +56,6 @@ class Visualizer(D2Visualizer):
 
         if out_shape is not None:
             canvas = cv2.resize(canvas, out_shape[::-1])
-        
 
         h, w = int(canvas.shape[0] / num_rows), int(canvas.shape[1] / num_colums)
 
@@ -108,7 +109,12 @@ class Visualizer(D2Visualizer):
         self.output = VisImage(self.img)
         return rendered
 
-    def draw_box(self, box_coord, alpha=0.5, edge_color="g", line_style="-"):
+    def topk_iou_boxes(self, candidates: Boxes, targets: Boxes, k=1):
+        iou_matrix = pairwise_iou(candidates, targets)
+        _, topk_idxs = iou_matrix.topk(k, dim=0)
+        return candidates.tensor[topk_idxs], topk_idxs
+
+    def draw_box(self, box_coord, alpha=0.5, edge_color="g", line_style="-", linewidth=2):
         """
         Args:
             box_coord (tuple): a tuple containing x0, y0, x1, y1 coordinates, where x0 and y0
@@ -126,8 +132,6 @@ class Visualizer(D2Visualizer):
         width = x1 - x0
         height = y1 - y0
 
-        linewidth = 4
-
         self.output.ax.add_patch(
             mpl.patches.Rectangle(
                 (x0, y0),
@@ -142,36 +146,23 @@ class Visualizer(D2Visualizer):
         )
         return self.output
 
-    
-    def select_predictions_by_ratio(self, predictions, ratios_ranges):
-        #ratios_ranges = [(0, 0.2), (0.2, 0.33), (0.33,3), (3,5), (5,1000)]
+    def group_by(self, object_list, values, ranges_dic):
+        """
+        Group given boxes by judging whether values are bwtween
+        the ranges in ranges_dic. A box can be assigned to multiple 
+        groups as there are no regulations on the intersections of ranges.
+        """
+        grouped = defaultdict(list)
+        assert len(object_list) == len(values)
 
-        boxes = np.asarray([x["bbox"] for x in predictions]).reshape(-1, 4)
-        boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-        box_ratios = (boxes[:, 0] - boxes[:, 2]) / (boxes[:, 1] - boxes[:, 3])
-        scores = np.asarray([x["score"] for x in predictions])
+        for index, item in enumerate(object_list):
+            for key, ranges in ranges_dic.items():
+                # An item in ranges dic may be a list of conditions.
+                if any_of(ranges, between, values[index]):
+                    grouped[key].append(item)
+        return grouped
 
-        selected_predictions = []
-#        for r_r in ratios_ranges:
-#            chosen = between(box_ratios, r_r).nonzero()[0]
-#            
-#            chosen_predictions=np.asarray(predictions)[chosen]
-#            selected_predictions.append(chosen_predictions)
-        chosen = np.logical_or(between(box_ratios, ratios_ranges[0]), between(box_ratios, ratios_ranges[-1])).nonzero()[0]#(0,0.2) or (5,1000)
-        chosen_predictions=np.asarray(predictions)[chosen]
-        selected_predictions.append(chosen_predictions)
-        
-        chosen = np.logical_or(between(box_ratios, ratios_ranges[1]), between(box_ratios, ratios_ranges[-2])).nonzero()[0]#(0.2,0.33) or (3,5)
-        chosen_predictions=np.asarray(predictions)[chosen]
-        selected_predictions.append(chosen_predictions)
-        
-        chosen = between(box_ratios, ratios_ranges[2]).nonzero()[0]#(0.33,3)
-        chosen_predictions=np.asarray(predictions)[chosen]
-        selected_predictions.append(chosen_predictions)
-        return selected_predictions
-        
     def select_dataset_dict_by_ratio(self, anno, ratios_ranges):
-        
 
         boxes = np.asarray([x["bbox"] for x in predictions]).reshape(-1, 4)
         boxes = BoxMode.convert(boxes, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
@@ -181,12 +172,11 @@ class Visualizer(D2Visualizer):
         selected_predictions = []
         for r_r in ratios_ranges:
             chosen = between(box_ratios, r_r).nonzero()[0]
-            
-            chosen_predictions=np.asarray(predictions)[chosen]
+
+            chosen_predictions = np.asarray(predictions)[chosen]
             selected_predictions.append(chosen_predictions)
-        return selected_predictions   
-        
-             
+        return selected_predictions
+
     def draw_instance_predictions(self, predictions):
         """
         Draw instance-level prediction results on an image.
@@ -235,7 +225,7 @@ class Visualizer(D2Visualizer):
             alpha=alpha,
         )
         return self.output
-        
+
     def draw_circle(self, circle_coord, color, radius=6):
         """
         Args:
@@ -253,7 +243,6 @@ class Visualizer(D2Visualizer):
             mpl.patches.Circle(circle_coord, radius=radius, fill=True, color=color)
         )
         return self.output
-
 
     def overlay_instances(
         self,
@@ -340,8 +329,8 @@ class Visualizer(D2Visualizer):
         for i in range(num_instances):
             color = assigned_colors[i]
             if boxes is not None:
-                if boxes[i,0]-boxes[i,2]==0 and boxes[i,1]-boxes[i,3]==0:
-                    self.draw_circle(boxes[i,:2], color)
+                if boxes[i, 0] - boxes[i, 2] == 0 and boxes[i, 1] - boxes[i, 3] == 0:
+                    self.draw_circle(boxes[i, :2], color)
                 else:
                     self.draw_box(boxes[i], edge_color=color)
 

@@ -78,7 +78,7 @@ class RPNWithAnchor(RPN):
             self.nms_thresh,
             self.pre_nms_topk[self.training],
             self.post_nms_topk[self.training],
-            self.min_box_side_len,
+            self.min_box_size,
             self.training,
         )
 #        proposals = self.predict_proposals(

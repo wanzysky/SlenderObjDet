@@ -1,0 +1,9 @@
+_BASE_: "../../faster/Base-RCNN-FPN.yaml"
+MODEL:
+  META_ARCHITECTURE: ProposalVisibleRCNNWithAnchor
+  PROPOSAL_GENERATOR:
+    NAME: RPNWithAnchor
+  ROI_HEADS:
+    NAME: ProposalVisibleHeadWithAnchor
+
+OUTPUT_DIR: ./train_log/faster/R_50_FPN/1x
