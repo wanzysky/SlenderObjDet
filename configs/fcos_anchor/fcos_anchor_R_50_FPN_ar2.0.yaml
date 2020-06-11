@@ -1,0 +1,11 @@
+_BASE_: "Base-FcosAnchor.yaml"
+MODEL:
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  ANCHOR_GENERATOR:
+    ASPECT_RATIOS: [[2.0, ]]
+
+SOLVER:
+  STEPS: (60000, 80000)
+  MAX_ITER: 90000

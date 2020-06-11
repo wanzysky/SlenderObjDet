@@ -56,6 +56,9 @@ _C.MODEL.FCOS.CENTERNESS_ON_REG = False
 _C.MODEL.FCOS.USE_DCN_IN_TOWER = False
 _C.MODEL.FCOS.USE_DCN_V2 = True
 
+# FCOS Anchor Setting
+_C.MODEL.FCOS.SMOOTH_L1_LOSS_BETA = 0.1
+
 
 def get_cfg() -> CN:
     """

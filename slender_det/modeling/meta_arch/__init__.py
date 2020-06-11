@@ -6,4 +6,5 @@ from .fcos import FCOS
 from .retinanetwa import RetinaNetWithAnchor
 from .fcoswa import FCOSWithAnchor
 from .pvrcnnwa import ProposalVisibleRCNNWithAnchor
+from .fcos_anchor import FCOSAnchor
 from .rpd import RepPointsDetector
