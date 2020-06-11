@@ -1,38 +1,26 @@
 import fire
-
 import torch
 import json
 import io
 import contextlib
+import tqdm
 
 from pycocotools.coco import COCO
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.logger import create_small_table
 
+from slender_det.structures.masks import PolygonMasks
 
-def evaluate_box_proposal(predictions, coco_api, thresholds=None, aspect_ratio="all", limit=None):
-    aspect_ratios = {
-        "all": 0,
-        "l1": 1,
-        "l2": 2,
-        "l3": 3,
-        "l4": 4,
-        "l5": 5
-    }
-    aspect_ratio_ranges = [
-        [0 / 1, 1000 / 1],
-        [0 / 1, 1 / 5],
-        [1 / 5, 1 / 3],
-        [1 / 3, 3 / 1],
-        [3 / 1, 5 / 1],
-        [5 / 1, 1000 / 1],
-    ]
-    assert aspect_ratio in aspect_ratios, "Unknown aspect ration range: {}".format(aspect_ratio)
-    aspect_ratio_range = aspect_ratio_ranges[aspect_ratios[aspect_ratio]]
+
+def evaluate_box_proposal(
+    predictions, coco_api,
+    thresholds=None, aspect_ratio_range=None,
+    limit=None, oriented=False
+):
     gt_overlaps = []
     num_pos = 0
 
-    for prediction_dict in predictions:
+    for prediction_dict in tqdm.tqdm(predictions):
         image_id = prediction_dict["image_id"]
         predictions = prediction_dict["instances"]
         predict_boxes = [
@@ -49,10 +37,20 @@ def evaluate_box_proposal(predictions, coco_api, thresholds=None, aspect_ratio="
             BoxMode.convert(obj["bbox"], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
             for obj in anno
         ]
-        gt_aspect_ratios = [
-            obj["bbox"][2] / obj["bbox"][3]  # w / h ==> aspect ratio
-            for obj in anno
-        ]
+        if oriented:
+            gt_aspect_ratios = []
+            for obj in anno:
+                if obj["iscrowd"]:
+                    gt_aspect_ratios.append(obj["bbox"][2] / obj["bbox"][3])
+                else:
+                    segmentations = PolygonMasks([obj["segmentation"]])
+                    ratios = segmentations.get_ratios(oriented=True)
+                    gt_aspect_ratios += ratios
+        else:
+            gt_aspect_ratios = [
+                obj["bbox"][2] / obj["bbox"][3]  # w / h ==> aspect ratio
+                for obj in anno
+            ]
         gt_boxes = torch.as_tensor(gt_boxes).reshape(-1, 4)  # guard against no boxes
         gt_boxes = Boxes(gt_boxes)
         gt_aspect_ratios = torch.as_tensor(gt_aspect_ratios)
@@ -117,7 +115,7 @@ def evaluate_box_proposal(predictions, coco_api, thresholds=None, aspect_ratio="
     }
 
 
-def main(predictions_file_path, json_file="datasets/coco/annotations/instances_val2017.json"):
+def main(predictions_file_path, json_file="datasets/coco/annotations/instances_val2017.json", oriented=False):
     with contextlib.redirect_stdout(io.StringIO()):
         coco_api = COCO(json_file)
 
@@ -126,18 +124,35 @@ def main(predictions_file_path, json_file="datasets/coco/annotations/instances_v
 
     print(len(predictions))
     res = {}
-    aspect_ratios = {
-        "all": "", "l1": " 0  - 1/5", "l2": "1/5 - 1/3", "l3": "1/3 - 3/1",
-        "l4": "3/1 - 5/1", "l5": "5/1 - INF",
-    }
+    if oriented:
+        aspect_ratios = {
+            "all": (0, 1),
+            "0-0.2": (0, 0.2),
+            "0.2-0.3*": (0.2, 1/3),
+            "0.3*-1": (0.3, 1),
+        }
+
+    else:
+        aspect_ratios = {
+            "all":[0 / 1, 1000 / 1],
+            "l1": [0 / 1, 1 / 5],
+            "l2": [1 / 5, 1 / 3],
+            "l3": [1 / 3, 3 / 1],
+            "l4": [3 / 1, 5 / 1],
+            "l5": [5 / 1, 1000 / 1],
+        }
     num_pos_dict = dict()
     limits = [100]
     for limit in limits:
-        for aspect_ratio, suffix in aspect_ratios.items():
-            stats = evaluate_box_proposal(predictions, coco_api, aspect_ratio=aspect_ratio, limit=limit)
-            key = "AR{}@{:d}".format(suffix, limit)
+        for name, ratio_range in aspect_ratios.items():
+            stats = evaluate_box_proposal(
+                predictions, coco_api,
+                aspect_ratio_range=ratio_range,
+                limit=limit,
+                oriented=oriented)
+            key = "AR{}@{:d}".format(name, limit)
             res[key] = float(stats["ar"].item() * 100)
-            num_pos_dict[aspect_ratio] = stats["num_pos"]
+            num_pos_dict[name] = stats["num_pos"]
 
     print("Proposal metrics: \n" + create_small_table(res))
 
