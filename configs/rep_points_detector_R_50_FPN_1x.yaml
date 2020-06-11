@@ -1,4 +1,4 @@
-_BASE_: "./Base-RetinaNet.yaml"
+_BASE_: "./retina/Base-RetinaNet.yaml"
 MODEL:
   META_ARCHITECTURE: "RepPointsDetector"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
