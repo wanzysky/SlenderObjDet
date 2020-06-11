@@ -11,6 +11,8 @@ from detectron2.structures import Boxes, Instances
 from detectron2.utils.events import get_event_storage
 
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
+
+
 def fast_rcnn_inference_with_anchor(proposals, boxes, scores, image_shapes, score_thresh, nms_thresh, topk_per_image):
     """
     Call `fast_rcnn_inference_single_image` for all images.
@@ -39,15 +41,17 @@ def fast_rcnn_inference_with_anchor(proposals, boxes, scores, image_shapes, scor
     """
     result_per_image = [
         fast_rcnn_inference_single_image_with_anchor(
-            proposals_per_image, boxes_per_image, scores_per_image, image_shape, score_thresh, nms_thresh, topk_per_image
+            proposals_per_image, boxes_per_image, scores_per_image, image_shape, score_thresh, nms_thresh,
+            topk_per_image
         )
-        for proposals_per_image, scores_per_image, boxes_per_image, image_shape in zip(proposals, scores, boxes, image_shapes)
+        for proposals_per_image, scores_per_image, boxes_per_image, image_shape in
+        zip(proposals, scores, boxes, image_shapes)
     ]
     return [x[0] for x in result_per_image], [x[1] for x in result_per_image]
 
 
 def fast_rcnn_inference_single_image_with_anchor(
-    proposals, boxes, scores, image_shape, score_thresh, nms_thresh, topk_per_image
+        proposals, boxes, scores, image_shape, score_thresh, nms_thresh, topk_per_image
 ):
     """
     Single-image inference. Return bounding-box detection results by thresholding
@@ -61,8 +65,8 @@ def fast_rcnn_inference_single_image_with_anchor(
         Same as `fast_rcnn_inference`, but for only one image.
     """
 
-    anchors=proposals.get_fields()['anchor_boxes'].tensor
-    proposals=proposals.get_fields()['proposal_boxes'].tensor
+    anchors = proposals.get_fields()['anchor_boxes'].tensor
+    proposals = proposals.get_fields()['proposal_boxes'].tensor
     valid_mask = torch.isfinite(boxes).all(dim=1) & torch.isfinite(scores).all(dim=1)
     if not valid_mask.all():
         boxes = boxes[valid_mask]
@@ -76,7 +80,7 @@ def fast_rcnn_inference_single_image_with_anchor(
     boxes = Boxes(boxes.reshape(-1, 4))
     boxes.clip(image_shape)
     boxes = boxes.tensor.view(-1, num_bbox_reg_classes, 4)  # R x C x 4
-    
+
     anchors = Boxes(anchors)
     proposals = Boxes(proposals)
     anchors.clip(image_shape)
@@ -99,15 +103,17 @@ def fast_rcnn_inference_single_image_with_anchor(
     keep = batched_nms(boxes, scores, filter_inds[:, 1], nms_thresh)
     if topk_per_image >= 0:
         keep = keep[:topk_per_image]
-    boxes, scores, filter_inds, anchors, proposals = boxes[keep], scores[keep], filter_inds[keep], anchors[keep], proposals[keep]
+    boxes, scores, filter_inds, anchors, proposals = boxes[keep], scores[keep], filter_inds[keep], anchors[keep], \
+                                                     proposals[keep]
 
     result = Instances(image_shape)
     result.pred_boxes = Boxes(boxes)
     result.scores = scores
     result.pred_classes = filter_inds[:, 1]
-    result.anchors= Boxes(anchors)
-    result.proposals= Boxes(proposals)
+    result.anchors = Boxes(anchors)
+    result.proposals = Boxes(proposals)
     return result, filter_inds[:, 0]
+
 
 class FastRCNNOutputLayersWithAnchor(FastRCNNOutputLayers):
     def inference(self, predictions, proposals):

@@ -1,9 +1,10 @@
-from torch.nn import functional as F
+import torch
+import torch.nn.functional as F
 
 from detectron2.layers import paste_masks_in_image
 from detectron2.structures import Instances
 from detectron2.utils.memory import retry_if_cuda_oom
-import torch
+
 
 def detector_postprocess_with_anchor(results, output_height, output_width, mask_threshold=0.5):
     """
@@ -31,9 +32,11 @@ def detector_postprocess_with_anchor(results, output_height, output_width, mask_
         output_boxes = results.pred_boxes
     elif results.has("proposal_boxes"):
         output_boxes = results.proposal_boxes
-    
-    
-    #add
+    else:
+        raise KeyError("key{pred_boxes/proposal_boxes} not found!"
+                       "Please check your output boxes.")
+
+    # add
     if results.has("anchors"):
         valid_mask = torch.isfinite(results.anchors.tensor).all(dim=1)
         if not valid_mask.all():
@@ -51,9 +54,7 @@ def detector_postprocess_with_anchor(results, output_height, output_width, mask_
 
     output_boxes.scale(scale_x, scale_y)
     output_boxes.clip(results.image_size)
-    
 
-    
     results = results[output_boxes.nonempty()]
 
     if results.has("pred_masks"):

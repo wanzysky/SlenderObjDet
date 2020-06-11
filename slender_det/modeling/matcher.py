@@ -51,9 +51,9 @@ def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
     gt_bboxes_lvl = torch.clamp(gt_bboxes_lvl, min=lvl_min, max=lvl_max)
 
     # stores the assigned gt index of each point
-    assigned_gt_inds = points.new_zeros((num_points, ), dtype=torch.long)
+    assigned_gt_inds = points.new_zeros((num_points,), dtype=torch.long)
     # stores the assigned gt dist (to this point) of each point
-    assigned_gt_dist = points.new_full((num_points, ), float('inf'))
+    assigned_gt_dist = points.new_full((num_points,), float('inf'))
     points_range = torch.arange(points.shape[0])
 
     for idx in range(num_gts):
@@ -91,7 +91,7 @@ def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
         assigned_gt_dist[min_dist_points_index] = min_dist[
             less_than_recorded_index]
 
-    assigned_labels = assigned_gt_inds.new_zeros((num_points, ))
+    assigned_labels = assigned_gt_inds.new_zeros((num_points,))
     pos_inds = torch.nonzero(assigned_gt_inds > 0).squeeze()
     if pos_inds.numel() > 0:
         assigned_labels[pos_inds] = 1
@@ -99,6 +99,7 @@ def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
     assigned_boxes = points.new_zeros([points.shape[0], 4])
     assigned_boxes[pos_inds] = gt_bboxes[assigned_gt_inds[pos_inds] - 1]
     return assigned_labels, assigned_boxes
+
 
 def nearest_point_match(centers, strides, boxes):
     objectness_label = torch.zeros_like(centers[:, 0])
@@ -123,7 +124,7 @@ def nearest_point_match(centers, strides, boxes):
     return objectness_label, bbox_label
 
 
-def inside_match(centers, strides, boxes:Boxes):
+def inside_match(centers, strides, boxes: Boxes):
     """
     Args:
         centers (torch.Tensor): (P, 2), center points from all levels.

@@ -4,7 +4,6 @@ from concern.support import make_dual
 
 
 def zero_center_grid(size):
-
     """
     Generate coordinate zero-centered grid.
     """
@@ -17,9 +16,9 @@ def zero_center_grid(size):
     valid_size(W)
     h = (H - 1) // 2
     w = (W - 1) // 2
-    
+
     grid_y, grid_x = torch.meshgrid(
-        torch.linspace(-h, h, H), 
+        torch.linspace(-h, h, H),
         torch.linspace(-w, w, W)
     )
     return torch.stack([grid_x, grid_y], axis=2)
@@ -32,7 +31,7 @@ def uniform_grid(size):
     H, W = make_dual(size)
 
     grid_y, grid_x = torch.meshgrid(
-        torch.linspace(0, H - 1, H), 
+        torch.linspace(0, H - 1, H),
         torch.linspace(0, W - 1, W)
     )
     return torch.stack([grid_x, grid_y], axis=2)
