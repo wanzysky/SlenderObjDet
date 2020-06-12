@@ -105,7 +105,7 @@ if __name__ == "__main__":
     ratios_ranges = {
         "0-0.2": [(0, 0.2), (5, float("inf"))],
         "0.2-0.3*": [(1. / 5, 1. / 3), (3, 5)],
-        "0.3*-1": [(1. / 3, 3)]
+        # "0.3*-1": [(1. / 3, 3)]
     }
 
     if args.multisave:
@@ -123,14 +123,8 @@ if __name__ == "__main__":
     for dic in bar:
         img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         basename = ".".join(os.path.basename(dic["file_name"]).split(".")[:-1])
-        vis = Visualizer(img, metadata, scale=scale)
-        vis_gt = vis.draw_dataset_dict(dic)
-        if args.show:
-            webcv2.imshow(basename + '@gt', vis_gt.get_image()[..., ::-1])
-        else:
-            save(vis_gt.get_image()[..., ::-1], 
-                 args.output, "gt", basename + ".jpg")
 
+        vis = Visualizer(img, metadata, scale=0.5)
         dic["annotations"] = [x for x in dic["annotations"] if x["iscrowd"] == 0]
         segmentations = [x["segmentation"] for x in dic["annotations"]]
         segmentations = PolygonMasks(segmentations)
@@ -141,9 +135,11 @@ if __name__ == "__main__":
             continue
         grouped_gt = vis.group_by(dic["annotations"], ratios, ratios_ranges)
 
+        visualized = False
         for range_name in ratios_ranges.keys():
             if not len(grouped_gt[range_name]) > 0:
                 continue
+            visualized =True
 
             vis = Visualizer(img, metadata, scale=scale)
             topk_boxes, topk_indices = vis.topk_iou_boxes(
@@ -152,6 +148,7 @@ if __name__ == "__main__":
                       ))
             topk_indices = topk_indices.reshape((-1, ))
             # Transform indices to list since shape 1 tensors will be regarded as scalars.
+            vis.draw_dataset_dict({"annotations": grouped_gt[range_name]})
             vis_boxes = vis.draw_instance_predictions(predictions[topk_indices.tolist()])
 
             if args.show:
@@ -176,5 +173,27 @@ if __name__ == "__main__":
                      range_name)
             ratio_counts[range_name] += 1
 
+        if not visualized:
+            continue
+
+        vis = Visualizer(img, metadata, scale=0.5)
+        vis_gt = vis.draw_dataset_dict(dic)
         if args.show:
-            webcv2.waitKey()
+            webcv2.imshow(basename + '@gt', vis_gt.get_image()[..., ::-1])
+        else:
+            save(vis_gt.get_image()[..., ::-1], 
+                 args.output, "gt", basename + ".jpg")
+
+        vis = Visualizer(img, metadata, scale=0.5)
+        vis_pred = vis.draw_instance_predictions(predictions)
+
+        if args.show:
+            webcv2.imshow(basename + '@pred', vis_pred.get_image()[..., ::-1])
+        else:
+            save(vis_pred.get_image()[..., ::-1], 
+                 args.output, "pred", basename + ".jpg")
+
+        if args.show:
+            import random
+            if random.random() < 0.1:
+                webcv2.waitKey()
