@@ -2,6 +2,7 @@ import torch
 
 from detectron2.layers import DeformConv
 
+import init_paths
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
 
 torch.set_default_tensor_type('torch.cuda.FloatTensor')

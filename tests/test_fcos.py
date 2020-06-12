@@ -5,6 +5,7 @@ import torch
 from detectron2.data import MetadataCatalog, build_detection_train_loader
 from detectron2.checkpoint import DetectionCheckpointer
 
+import init_paths
 from slender_det.config import get_cfg
 from slender_det.data import BorderMaskMapper
 from slender_det.modeling.meta_arch.fcos import FCOS, FCOSHead

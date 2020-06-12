@@ -4,7 +4,9 @@ import torch.nn.functional as F
 
 from detectron2.layers import DeformConv
 
+import init_paths
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
+
 
 def my_dconv(feature, offset, weights):
     pad = 1
@@ -16,7 +18,6 @@ def my_dconv(feature, offset, weights):
     result = torch.zeros((1, 1, 4, 4))
     pad_result = torch.zeros((1, 1, 4, 4))
     offset = offset.view(1, 3, 3, 2, 4, 4)
-
 
     pad_feature = F.pad(feature, (1, 1, 1, 1), mode='constant')
     for i in range(9):
@@ -58,10 +59,9 @@ def my_conv(feature, weights):
         h_i = i // 3
         w_i = i % 3
 
-        weight = weights[:, :, h_i:h_i+1, w_i:w_i+1] # 1, 2, 1, 1
-        result = (weight * feature[:, :, h_i:h_i+4, w_i:w_i+4]).sum(1, keepdim=True) + result
+        weight = weights[:, :, h_i:h_i + 1, w_i:w_i + 1]  # 1, 2, 1, 1
+        result = (weight * feature[:, :, h_i:h_i + 4, w_i:w_i + 4]).sum(1, keepdim=True) + result
     return result
-
 
 
 torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -71,10 +71,9 @@ deform_conv = DeformConv(2, 1, 3, 1, 1, bias=False)
 deform_conv.weight.data = torch.arange(9).float().reshape(1, 1, 3, 3).repeat(1, 2, 1, 1)
 conv.weight.data = torch.arange(9).float().reshape(1, 1, 3, 3).repeat(1, 2, 1, 1)
 
-
 # 1, 2, 4, 4
 grid = uniform_grid(4).unsqueeze(0).permute(0, 3, 1, 2)
-grid = torch.stack([grid[:, 0], torch.zeros_like(grid[:, 0])+0.1], 1)
+grid = torch.stack([grid[:, 0], torch.zeros_like(grid[:, 0]) + 0.1], 1)
 
 # 9, 2
 offsets_1 = zero_center_grid(3).reshape(1, -1, 1, 1)

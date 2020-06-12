@@ -14,6 +14,7 @@ from detectron2.data.build import filter_images_with_few_keypoints
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
 
+import init_paths
 from slender_det.config import get_cfg
 from slender_det.data import BorderMaskMapper
 from concern import webcv2
