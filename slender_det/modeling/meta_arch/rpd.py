@@ -479,7 +479,7 @@ class RepPointsDetector(nn.Module):
         refine_image = vp_refine.get_image()
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
-        vis_img = refine_image.get()
+        #vis_img = refine_image.get()
         vis_img = refine_image
         # NOTE: This is commented temporarily. Uncomment it if
         # eagerly visualization is desired.
@@ -552,7 +552,7 @@ class RepPointsDetector(nn.Module):
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
 
-        vis_img = np.vstack((init_image.get(), refine_image.get()))
+        vis_img = np.vstack((init_image, refine_image))
         if self.training:
             vis_img = vis_img.transpose(2, 0, 1)
             storage.put_image("TOP: init pred boxes; Bottom: refine pred boxes", vis_img)
@@ -616,7 +616,8 @@ class RepPointsDetector(nn.Module):
                 self.logits(self.deform_cls_conv(cls_features[i], dcn_offset)))
             offsets_refine.append(
                 self.offsets_refine(
-                    self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
+                    self.deform_reg_conv(reg_features[i], dcn_offset)) +
+                    #self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
                 offsets_init[i].detach())
 
         point_centers, strides = self.get_center_grid(features)
@@ -756,7 +757,8 @@ class RepPointsDetector(nn.Module):
         keep = keep[: self.max_detections_per_image]
 
         result = Instances(image_size)
-        result.pred_boxes = Boxes(boxes_all[keep])
+        result.pred_boxes = Boxes(init_boxes_all[keep])
+        #result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
         result.init_boxes = init_boxes_all[keep]
