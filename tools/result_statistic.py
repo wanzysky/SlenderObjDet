@@ -13,9 +13,9 @@ from slender_det.structures.masks import PolygonMasks
 
 
 def evaluate_box_proposal(
-    predictions, coco_api,
-    thresholds=None, aspect_ratio_range=None,
-    limit=None, oriented=False
+        predictions, coco_api,
+        thresholds=None, aspect_ratio_range=None,
+        limit=None, oriented=False
 ):
     gt_overlaps = []
     num_pos = 0
@@ -128,13 +128,13 @@ def main(predictions_file_path, json_file="datasets/coco/annotations/instances_v
         aspect_ratios = {
             "all": (0, 1),
             "0-0.2": (0, 0.2),
-            "0.2-0.3*": (0.2, 1/3),
-            "0.3*-1": (1/3, 1),
+            "0.2-0.3*": (0.2, 1 / 3),
+            "0.3*-1": (0.3, 1),
         }
 
     else:
         aspect_ratios = {
-            "all":[0 / 1, 1000 / 1],
+            "all": [0 / 1, 1000 / 1],
             "l1": [0 / 1, 1 / 5],
             "l2": [1 / 5, 1 / 3],
             "l3": [1 / 3, 3 / 1],

@@ -569,29 +569,19 @@ class FCOSAnchorHead(torch.nn.Module):
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         torch.nn.init.constant_(self.cls_score.bias, bias_value)
 
-        self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
-
     def forward(self, x):
         logits = []
         bbox_reg = []
-        centerness = []
+        center_score = []
         for l, feature in enumerate(x):
             cls_tower = self.cls_tower(feature)
             box_tower = self.bbox_tower(feature)
 
             logits.append(self.cls_score(cls_tower))
+            bbox_reg.append(self.bbox_pred(box_tower))
             if self.centerness_on_reg:
-                centerness.append(self.centerness(box_tower))
+                center_score.append(self.centerness(box_tower))
             else:
-                centerness.append(self.centerness(cls_tower))
+                center_score.append(self.centerness(cls_tower))
 
-            bbox_pred = self.scales[l](self.bbox_pred(box_tower))
-            if self.norm_reg_targets:
-                bbox_pred = F.relu(bbox_pred)
-                if self.training:
-                    bbox_reg.append(bbox_pred)
-                else:
-                    bbox_reg.append(bbox_pred * self.fpn_strides[l])
-            else:
-                bbox_reg.append(torch.exp(bbox_pred))
-        return logits, bbox_reg, centerness
+        return logits, bbox_reg, center_score
