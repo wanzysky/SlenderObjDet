@@ -83,6 +83,7 @@ class COCOEvaluatorWithAnchors(COCOEvaluator):
             if "instances" in output:
                 instances = output["instances"].to(self._cpu_device)
                 prediction["instances"] = instances_to_coco_json_with_anchor(instances, input["image_id"])
+
             if "proposals" in output:
                 prediction["proposals"] = output["proposals"].to(self._cpu_device)
             self._predictions.append(prediction)
@@ -108,9 +109,12 @@ def instances_to_coco_json_with_anchor(instances, img_id):
     boxes = boxes.tolist()
     scores = instances.scores.tolist()
     classes = instances.pred_classes.tolist()
-    anchors = instances.anchors.tensor.numpy()
-    anchors = BoxMode.convert(anchors, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-    anchors = anchors.tolist()
+
+    has_anchor = instances.has("anchors")
+    if has_anchor:
+        anchors = instances.anchors.tensor.numpy()
+        anchors = BoxMode.convert(anchors, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+        anchors = anchors.tolist()
 
     has_mask = instances.has("pred_masks")
     if has_mask:
@@ -138,8 +142,9 @@ def instances_to_coco_json_with_anchor(instances, img_id):
             "category_id": classes[k],
             "bbox": boxes[k],
             "score": scores[k],
-            "anchor": anchors[k],
         }
+        if has_anchor:
+            result["anchor"] = anchors[k],
         if has_mask:
             result["segmentation"] = rles[k]
         if has_keypoints:
