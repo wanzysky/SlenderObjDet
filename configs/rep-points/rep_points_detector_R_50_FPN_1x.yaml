@@ -1,4 +1,4 @@
-_BASE_: "./retina/Base-RetinaNet.yaml"
+_BASE_: "../retina/Base-RetinaNet.yaml"
 MODEL:
   META_ARCHITECTURE: "RepPointsDetector"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
@@ -15,4 +15,4 @@ MODEL:
 SOLVER:
   WARMUP_FACTOR: 0.33
 
-OUTPUT_DIR: ./train_log/rep_points_detector_R_50_FPN_GN_1x_nearest_points
+OUTPUT_DIR: ./train_log/rep_points_detector/R_50/FPN/GN/1x

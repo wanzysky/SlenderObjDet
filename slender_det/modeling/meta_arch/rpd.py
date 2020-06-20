@@ -479,8 +479,7 @@ class RepPointsDetector(nn.Module):
         refine_image = vp_refine.get_image()
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
-        #vis_img = refine_image.get()
-        vis_img = refine_image
+        vis_img = refine_image.get()
         # NOTE: This is commented temporarily. Uncomment it if
         # eagerly visualization is desired.
         '''
@@ -552,7 +551,7 @@ class RepPointsDetector(nn.Module):
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
 
-        vis_img = np.vstack((init_image, refine_image))
+        vis_img = np.vstack((init_image.get(), refine_image.get()))
         if self.training:
             vis_img = vis_img.transpose(2, 0, 1)
             storage.put_image("TOP: init pred boxes; Bottom: refine pred boxes", vis_img)
