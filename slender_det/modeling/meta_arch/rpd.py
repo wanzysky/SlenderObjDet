@@ -86,7 +86,7 @@ class RepPointsDetector(nn.Module):
             self.moment_mul = 0.01
 
         if self.use_sigmoid_cls:
-            self.cls_out_channels = self.num_classes - 1
+            self.cls_out_channels = self.num_classes
 
         # 3 for 9 points representation.
         self.dcn_kernel = int(np.sqrt(self.num_points))
@@ -534,7 +534,6 @@ class RepPointsDetector(nn.Module):
         refine_image = vp_refine.get_image()
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
-        vis_img = refine_image.get()
         # NOTE: This is commented temporarily. Uncomment it if
         # eagerly visualization is desired.
         '''
@@ -606,7 +605,7 @@ class RepPointsDetector(nn.Module):
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
 
-        vis_img = np.vstack((init_image.get(), refine_image.get()))
+        vis_img = np.vstack((init_image, refine_image))
         if self.training:
             vis_img = vis_img.transpose(2, 0, 1)
             storage.put_image("TOP: init pred boxes; Bottom: refine pred boxes", vis_img)
@@ -843,7 +842,6 @@ class RepPointsDetector(nn.Module):
         keep = keep[: self.max_detections_per_image]
 
         result = Instances(image_size)
-        #result.pred_boxes = Boxes(init_boxes_all[keep])
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
