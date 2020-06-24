@@ -46,16 +46,16 @@ class BorderMaskMapper(D2Mapper):
         super().__init__(cfg, is_train=is_train)
         assert len(mask_keys) > 0
         self.mask_keys = mask_keys
-        self.prepare_nori(cfg)
         self.is_train = is_train
         self.nori_redis = None
         self.need_masks = cfg.NEED_MASKS
+        self.prepare_nori(cfg)
 
     def prepare_nori(self, cfg):
         self.use_nori = cfg.USE_NORI
         if not self.use_nori:
             return
-        split_name = "val2017" if self.is_train else "val2017"
+        split_name = "train2017" if self.is_train else "val2017"
 
         self.image_fetcher = NoriRedis(
             cfg,

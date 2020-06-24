@@ -1,8 +1,6 @@
 import redis
 from tqdm import tqdm
 
-import nori2 as nr
-
 from concern.smart_path import smart_path
 
 
@@ -34,6 +32,7 @@ class NoriRedis(object):
         return binary.decode()
 
     def sync(self):
+        import nori2 as nr
         if not self.connected:
             self.connect()
         self.connection.delete(self.nori_path)
@@ -46,6 +45,7 @@ class NoriRedis(object):
                 self.connection.hset(self.nori_path, file_name, data_id)
 
     def fetch(self, file_name, fetcher=None):
+        import nori2 as nr
         data_id = self.get(smart_path(file_name).name)
         if fetcher is None:
             if self.fechcer is None:

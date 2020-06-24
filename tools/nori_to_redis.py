@@ -11,7 +11,7 @@ from ._setup import setup
 def parse_args(in_args=None):
     parser = argparse.ArgumentParser(description="Visualize ground-truth data")
     parser.add_argument("--config-file", metavar="FILE", help="path to config file")
-    parser.add_argument("--nori", default="s3://detection/slender-det/coco/val2017.nori", help="path of nori")
+    parser.add_argument("--nori", default="s3://detection/datasets/coco/train2017.nori", help="path of nori")
     parser.add_argument(
         "opts",
         help="Modify config options using the command-line",
