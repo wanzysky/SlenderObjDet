@@ -16,8 +16,10 @@ from detectron2.modeling.meta_arch.retinanet import permute_to_N_HWA_K
 from slender_det.modeling.detector_postprocessing_with_anchor import detector_postprocess_with_anchor
 
 __all__ = ["RetinaNetWithAnchor"]
+
+
 @META_ARCH_REGISTRY.register()
-class RetinaNetWithAnchor(RetinaNet): 
+class RetinaNetWithAnchor(RetinaNet):
     def forward(self, batched_inputs):
         """
         Args:
@@ -43,36 +45,46 @@ class RetinaNetWithAnchor(RetinaNet):
         anchors = self.anchor_generator(features)
         pred_logits, pred_anchor_deltas = self.head(features)
         # Transpose the Hi*Wi*A dimension to the middle:
-        pred_logits = [permute_to_N_HWA_K(x, self.num_classes) for x in pred_logits]
-        pred_anchor_deltas = [permute_to_N_HWA_K(x, 4) for x in pred_anchor_deltas]
+        pred_logits = [
+            permute_to_N_HWA_K(x, self.num_classes) for x in pred_logits
+        ]
+        pred_anchor_deltas = [
+            permute_to_N_HWA_K(x, 4) for x in pred_anchor_deltas
+        ]
 
         if self.training:
-            assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
-            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+            assert "instances" in batched_inputs[
+                0], "Instance annotations are missing in training!"
+            gt_instances = [
+                x["instances"].to(self.device) for x in batched_inputs
+            ]
 
             gt_labels, gt_boxes = self.label_anchors(anchors, gt_instances)
-            losses = self.losses(anchors, pred_logits, gt_labels, pred_anchor_deltas, gt_boxes)
+            losses = self.losses(anchors, pred_logits, gt_labels,
+                                 pred_anchor_deltas, gt_boxes)
 
             if self.vis_period > 0:
                 storage = get_event_storage()
                 if storage.iter % self.vis_period == 0:
-                    results = self.inference(
-                        anchors, pred_logits, pred_anchor_deltas, images.image_sizes
-                    )
+                    results = self.inference(anchors, pred_logits,
+                                             pred_anchor_deltas,
+                                             images.image_sizes)
                     self.visualize_training(batched_inputs, results)
 
             return losses
         else:
-            results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
+            results = self.inference(anchors, pred_logits, pred_anchor_deltas,
+                                     images.image_sizes)
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
-                results, batched_inputs, images.image_sizes
-            ):
+                    results, batched_inputs, images.image_sizes):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])
-                r = detector_postprocess_with_anchor(results_per_image, height, width)
+                r = detector_postprocess_with_anchor(results_per_image, height,
+                                                     width)
                 processed_results.append({"instances": r})
             return processed_results
+
     def inference_single_image(self, anchors, box_cls, box_delta, image_size):
         """
         Single-image inference. Return bounding-box detection results by thresholding
@@ -95,7 +107,8 @@ class RetinaNetWithAnchor(RetinaNet):
         anchors_all = []
 
         # Iterate over every feature level
-        for box_cls_i, box_reg_i, anchors_i in zip(box_cls, box_delta, anchors):
+        for box_cls_i, box_reg_i, anchors_i in zip(box_cls, box_delta,
+                                                   anchors):
             # (HxWxAxK,)
             box_cls_i = box_cls_i.flatten().sigmoid_()
 
@@ -117,7 +130,8 @@ class RetinaNetWithAnchor(RetinaNet):
             box_reg_i = box_reg_i[anchor_idxs]
             anchors_i = anchors_i[anchor_idxs]
             # predict boxes
-            predicted_boxes = self.box2box_transform.apply_deltas(box_reg_i, anchors_i.tensor)
+            predicted_boxes = self.box2box_transform.apply_deltas(
+                box_reg_i, anchors_i.tensor)
 
             boxes_all.append(predicted_boxes)
             scores_all.append(predicted_prob)
@@ -125,15 +139,16 @@ class RetinaNetWithAnchor(RetinaNet):
             anchors_all.append(anchors_i.tensor)
 
         boxes_all, scores_all, class_idxs_all, anchors_all = [
-            cat(x) for x in [boxes_all, scores_all, class_idxs_all, anchors_all]
+            cat(x)
+            for x in [boxes_all, scores_all, class_idxs_all, anchors_all]
         ]
-        keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
-        keep = keep[: self.max_detections_per_image]
+        keep = batched_nms(boxes_all, scores_all, class_idxs_all,
+                           self.nms_threshold)
+        keep = keep[:self.max_detections_per_image]
 
         result = Instances(image_size)
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
-        result.anchors=Boxes(anchors_all[keep])
+        result.anchors = Boxes(anchors_all[keep])
         return result
-  

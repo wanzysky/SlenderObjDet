@@ -2,6 +2,7 @@ from collections import Iterable
 
 import numpy as np
 import cv2
+import matplotlib.pyplot as plt
 
 
 def any_of(array, function, *args, **kwargs):
@@ -62,3 +63,9 @@ def ratio_of_polygon(polygon):
     w, h = rect[1]
     return min(w, h) / max(w, h)
 
+
+def fig2image(fig: plt.Figure):
+    fig.canvas.draw()
+    buff, (width, height) = fig.canvas.print_to_buffer()
+    image = np.fromstring(buff, dtype=np.uint8).reshape(height, width, 4)
+    return image
