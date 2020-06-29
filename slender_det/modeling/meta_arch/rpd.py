@@ -214,6 +214,11 @@ class RepPointsDetector(nn.Module):
         return convs
 
     def get_center_grid(self, features):
+        '''
+            Returns:
+                points_centers: List[[H*W,2]]
+                strides: List[[H*W]]
+        '''
         point_centers = []
         strides = []
         for f_i, feature in enumerate(features):
@@ -223,29 +228,33 @@ class RepPointsDetector(nn.Module):
             grid = self.grid[:height, :width].reshape(-1, 2)
             strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
             point_centers.append(grid * stride)
-        return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
-
-    def points2bbox(self, base_grids: torch.Tensor, deltas: List[torch.Tensor]):
+            #point_centers.append(grid * stride)
+        return point_centers, strides
+        
+    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
+        '''
+            Args:
+                base_grids: List[[H*W,2]] coordinate of each feature map
+                deltas: List[[N,C,H,W]] offsets
+            Returns:
+                bboxes: List[[N,4,H,W]]
+        '''
         bboxes = []
-        H_i, W_i = float("inf"), float("inf")
-        start = 0
         # For each level
-        for delta in deltas:
+        for i in range(len(deltas)):
             """
-            delta: (N, 18, H_i, W_i), 
+            delta: (N, C, H_i, W_i),
+            C=4 or 18 
             """
-            # Assuming that strides go from small to large
-            assert delta.size(-2) < H_i
-            assert delta.size(-1) < W_i
-            H_i, W_i = delta.shape[-2:]
+            delta = deltas[i]
+            N, C, H_i, W_i = delta.shape
             # (1, 2, H_i, W_i), grid for this feature level.
-            base_grid = base_grids[start:start + H_i * W_i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
-            start += H_i * W_i
+            base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
 
-            # (N*9, 2, H_i, W_i)
-            delta = delta.view(-1, 9, 2, H_i, W_i).view(-1, 2, H_i, W_i)
-            # (N, 9, 2, H_i, W_i)
-            points = (delta + base_grid).view(-1, 9, 2, H_i, W_i)
+            # (N*C/2, 2, H_i, W_i)
+            delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+            # (N, C/2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
             bbox_left = pts_x.min(dim=1, keepdim=True)[0]
@@ -257,25 +266,71 @@ class RepPointsDetector(nn.Module):
                 [bbox_left, bbox_up, bbox_right, bbox_bottom],
                 dim=1)
             bboxes.append(bbox)
-            continue
-
-            # (N, 1, 2, H_i, W_i)
-            points_mean = points.mean(dim=1, keepdim=True)
-            # (N, 1, 2, H_i, W_i)
-            points_std = torch.std(points - points_mean, dim=1, keepdim=True)
-            # (2)
-            moment_transfer = (self.moment_transfer * self.moment_mul) + (
-                self.moment_transfer.detach() * (1 - self.moment_mul))
-            half_shape = points_std * torch.exp(moment_transfer)[None, None, :, None, None]
-            # (N, 4, H_i, W_i)
-            bbox = torch.cat(
-                [points_mean[:, :, 0] - half_shape[:, :, 0],
-                 points_mean[:, :, 1] - half_shape[:, :, 1],
-                 points_mean[:, :, 0] + half_shape[:, :, 0],
-                 points_mean[:, :, 1] + half_shape[:, :, 1]],
-                dim=1)
-            bboxes.append(bbox)
         return bboxes
+        
+#    def get_center_grid(self, features):
+#        point_centers = []
+#        strides = []
+#        for f_i, feature in enumerate(features):
+#            height, width = feature.shape[2:]
+#            stride = self.strides[f_i]
+#            # HxW, 2
+#            grid = self.grid[:height, :width].reshape(-1, 2)
+#            strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
+#            point_centers.append(grid * stride)
+#        return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
+#
+#    def points2bbox(self, base_grids: torch.Tensor, deltas: List[torch.Tensor]):
+#        bboxes = []
+#        H_i, W_i = float("inf"), float("inf")
+#        start = 0
+#        # For each level
+#        for delta in deltas:
+#            """
+#            delta: (N, 18, H_i, W_i), 
+#            """
+#            # Assuming that strides go from small to large
+#            assert delta.size(-2) < H_i
+#            assert delta.size(-1) < W_i
+#            H_i, W_i = delta.shape[-2:]
+#            # (1, 2, H_i, W_i), grid for this feature level.
+#            base_grid = base_grids[start:start + H_i * W_i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
+#            start += H_i * W_i
+#
+#            # (N*9, 2, H_i, W_i)
+#            delta = delta.view(-1, 9, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+#            # (N, 9, 2, H_i, W_i)
+#            points = (delta + base_grid).view(-1, 9, 2, H_i, W_i)
+#            pts_x = points[:, :, 0, :, :]
+#            pts_y = points[:, :, 1, :, :]
+#            bbox_left = pts_x.min(dim=1, keepdim=True)[0]
+#            bbox_right = pts_x.max(dim=1, keepdim=True)[0]
+#            bbox_up = pts_y.min(dim=1, keepdim=True)[0]
+#            bbox_bottom = pts_y.max(dim=1, keepdim=True)[0]
+#
+#            bbox = torch.cat(
+#                [bbox_left, bbox_up, bbox_right, bbox_bottom],
+#                dim=1)
+#            bboxes.append(bbox)
+#            continue
+#
+#            # (N, 1, 2, H_i, W_i)
+#            points_mean = points.mean(dim=1, keepdim=True)
+#            # (N, 1, 2, H_i, W_i)
+#            points_std = torch.std(points - points_mean, dim=1, keepdim=True)
+#            # (2)
+#            moment_transfer = (self.moment_transfer * self.moment_mul) + (
+#                self.moment_transfer.detach() * (1 - self.moment_mul))
+#            half_shape = points_std * torch.exp(moment_transfer)[None, None, :, None, None]
+#            # (N, 4, H_i, W_i)
+#            bbox = torch.cat(
+#                [points_mean[:, :, 0] - half_shape[:, :, 0],
+#                 points_mean[:, :, 1] - half_shape[:, :, 1],
+#                 points_mean[:, :, 0] + half_shape[:, :, 0],
+#                 points_mean[:, :, 1] + half_shape[:, :, 1]],
+#                dim=1)
+#            bboxes.append(bbox)
+#        return bboxes
 
     @torch.no_grad()
     def get_ground_truth(self, centers: torch.Tensor, strides, init_boxes, gt_instances):
@@ -562,6 +617,31 @@ class RepPointsDetector(nn.Module):
             webcv2.imshow('pred', vis_img)
             webcv2.waitKey()
         '''
+        
+    def offset_to_pts(self, center_list, pred_list):
+        """Change from point offset to point coordinate.
+            Args:
+                center_list: List[[H*W,2]] center coordinate of each fpn level
+                pred_list: List[[N,C,H,W]] C=4 or 18, pred offset
+            Returns:
+                pts_list: List[[N,C,H,W]] C=4 or 18
+                
+        """
+        #important!
+        #in rpd, the coordinates of prediction points is xy form , original is yx form!
+        pts_list = []
+        for i_lvl in range(len(self.point_strides)):
+            pts_shift = pred_list[i_lvl]
+            N,C,H,W = pts_shift.shape
+            #[H*W,2]->[N,H*W,C]
+            pts_center = center_list[i_lvl][:, :2].repeat(
+                N, 1, self.num_points)
+            #[N,C,H,W]->[N,H,W,C]->[N,H*W,C]
+            xy_pts_shift = pts_shift.permute(0, 2, 3, 1).view(
+                N, -1, 2 * self.num_points)
+            pts_lvl = xy_pts_shift * self.point_strides[i_lvl] + pts_center
+            pts_list.append(pts_lvl.permute(0, 2, 1).view(N,C,H,W))
+        return pts_list
 
     def forward(self, batched_inputs):
         """
@@ -618,11 +698,18 @@ class RepPointsDetector(nn.Module):
                     self.deform_reg_conv(reg_features[i], dcn_offset)) +
                     #self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
                 offsets_init[i].detach())
+        
 
         point_centers, strides = self.get_center_grid(features)
-        init_boxes = self.points2bbox(point_centers, offsets_init)
-        refine_boxes = self.points2bbox(point_centers, offsets_refine)
-
+#        #before offset_to_pts: feature level offset,
+#        #after offset_to_pts: image level offset
+#        init_points = self.offset_to_pts(point_centers, offsets_init)
+#        refine_points = self.offset_to_pts(point_centers, offsets_refine)
+        init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
+        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
+        #flatten point_centers, strides
+        point_centers = torch.cat(point_centers,0)
+        strides = torch.cat(strides,0)
         if self.training:
             gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
                 self.get_ground_truth(point_centers, strides,
@@ -756,8 +843,8 @@ class RepPointsDetector(nn.Module):
         keep = keep[: self.max_detections_per_image]
 
         result = Instances(image_size)
-        result.pred_boxes = Boxes(init_boxes_all[keep])
-        #result.pred_boxes = Boxes(boxes_all[keep])
+        #result.pred_boxes = Boxes(init_boxes_all[keep])
+        result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
         result.init_boxes = init_boxes_all[keep]

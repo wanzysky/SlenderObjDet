@@ -1,0 +1,12 @@
+_BASE_: "Base-RetinaNet.yaml"
+MODEL:
+  META_ARCHITECTURE: "PointRetinaNet"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  PROPOSAL_GENERATOR:
+    NUM_POINTS: 9
+    SAMPLE_MODE: "points"
+
+VIS_PERIOD: 1024
+OUTPUT_DIR: ./train_log/0623_retinanet_points_R_50_FPN_1x
