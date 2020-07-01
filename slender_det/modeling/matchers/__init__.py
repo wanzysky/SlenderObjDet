@@ -10,13 +10,13 @@ def build_matcher(cfg):
     assert type in MATCHER_TYPES, "Matcher Type doesn't exist!" \
                                   "Expected one in {}," \
                                   "But got {}".format(MATCHER_TYPES, type)
-    if type is "Origin":
+    if type == "Origin":
         return Matcher(
             cfg.MODEL.RPN.IOU_THRESHOLDS, cfg.MODEL.RPN.IOU_LABELS, allow_low_quality_matches=True
         )
-    elif type is "TopK":
+    elif type == "TopK":
         return TopKMatcher(
             cfg.MODEL.RPN.IOU_THRESHOLDS, cfg.MODEL.RPN.IOU_LABELS, cfg.MODEL.RPN.MATCHER.TOPK
         )
     else:
-        raise ValueError("Unknown type: {}".format(type))
+        raise ValueError("Unknown Matcher type: {}".format(type))

@@ -120,12 +120,12 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
         "l5": 5
     }
     aspect_ratio_ranges = [
-        [0 / 1, 1000 / 1],
+        [0 / 1, 1e3 / 1],
         [0 / 1, 1 / 5],
         [1 / 5, 1 / 3],
         [1 / 3, 3 / 1],
         [3 / 1, 5 / 1],
-        [5 / 1, 1000 / 1],
+        [5 / 1, 1e3 / 1],
     ]
     assert aspect_ratio in aspect_ratios, "Unknown aspect ration range: {}".format(aspect_ratio)
     aspect_ratio_range = aspect_ratio_ranges[aspect_ratios[aspect_ratio]]
