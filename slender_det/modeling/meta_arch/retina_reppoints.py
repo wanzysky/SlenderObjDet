@@ -21,29 +21,43 @@ from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_
 
 from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-__all__ = ["PointRetinaNet","PointRetinaNetHead"]
+import cv2
+__all__ = ["ReppointsRetinaNet","ReppointsRetinaNetHead"]
 
 @META_ARCH_REGISTRY.register()
-class PointRetinaNet(RetinaNet):
+class ReppointsRetinaNet(nn.Module):
     """
     Implement RetinaNet in :paper:`RetinaNet`.
     """
 
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__()
+        self.num_classes = cfg.MODEL.RETINANET.NUM_CLASSES
+        self.in_features = cfg.MODEL.RETINANET.IN_FEATURES
+        self.focal_loss_alpha = cfg.MODEL.RETINANET.FOCAL_LOSS_ALPHA
+        self.focal_loss_gamma = cfg.MODEL.RETINANET.FOCAL_LOSS_GAMMA
+        self.topk_candidates = cfg.MODEL.RETINANET.TOPK_CANDIDATES_TEST
+        self.score_threshold = cfg.MODEL.RETINANET.SCORE_THRESH_TEST
+        self.nms_threshold = cfg.MODEL.RETINANET.NMS_THRESH_TEST
+        self.max_detections_per_image = cfg.TEST.DETECTIONS_PER_IMAGE
+        
+        self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
+        
+        self.backbone = build_backbone(cfg)
         backbone_shape = self.backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
-        self.head = PointRetinaNetHead(cfg, feature_shapes)
+        self.head = ReppointsRetinaNetHead(cfg, feature_shapes)
         grid = uniform_grid(2048)
         self.register_buffer("grid", grid)
-        self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
         self.point_strides = [8, 16, 32, 64, 128]
         self.loss_normalizer = 20  # initialize with any reasonable #fg that's not too small
         self.loss_normalizer_momentum = 0.9
-        self.num_classes = cfg.MODEL.RETINANET.NUM_CLASSES
-        self.in_features = cfg.MODEL.RETINANET.IN_FEATURES
         input_shape = self.backbone.output_shape()
         self.strides = [input_shape[f].stride for f in self.in_features]
+        
+        self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
+        self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
+        self.vis_period = 1024
         
         # Assigning init box labels.
         if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
@@ -91,58 +105,54 @@ class PointRetinaNet(RetinaNet):
         
         #pred_deltas changes from [dx,dy,dw,dh] of retina to [x1,y1,x2,y2]
         #List[[N,C,H,W]]
-        pred_logits, pred_deltas = self.head(features)
+        logits, offsets_init, offsets_refine = self.head(features)
         
         #List[[H*W,2]] List[[H*W]]
         point_centers, strides = self.get_center_grid(features)
         
         #List[[N,4,H,W]]
-        pred_bboxes = self.points2bbox(point_centers, pred_deltas)
-        #pred_bboxes = self.points2bbox(point_centers, pred_deltas, self.point_strides)
-
+        init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
+        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
+        #flatten point_centers, strides
+        point_centers = torch.cat(point_centers,0)
+        strides = torch.cat(strides,0)
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-            
-            #flatten point_centers, strides
-            point_centers = torch.cat(point_centers,0)
-            strides = torch.cat(strides,0)
-            
-            #important!!
-            #init_bbox and refine_bbox are assign by different matcher: nearest vs IoU
-            #here we use IoU assign
-            gt_init_objectness, gt_init_bboxes, gt_cls, gt_refine_bboxes =\
-                self.get_ground_truth(point_centers, strides,
-                                      flat_and_concate_levels(pred_bboxes), gt_instances)
-            
 
-                    
+            #init_bbox and refine_bbox are assign by different matcher: nearest vs IoU
+            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
+                self.get_ground_truth(point_centers, strides,
+                                      flat_and_concate_levels(init_boxes), gt_instances)
+            
             storage = get_event_storage()
             # This condition is keeped as the code is from RetinaNet in D2.
             if storage.iter % self.vis_period == 0:
-                results = self.inference(pred_logits, pred_bboxes, images.image_sizes)
+                results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
                 self.visualize_training(batched_inputs, results)
 
-#            self.may_visualize_gt(
-#                batched_inputs, gt_init_objectness.bool(),
-#                gt_init_offsets, gt_cls, gt_refine_offsets,
-#                point_centers,
-#                flat_and_concate_levels(init_boxes),
-#                flat_and_concate_levels(refine_boxes),
-#                flat_and_concate_levels(logits))
+            self.may_visualize_gt(
+                batched_inputs, gt_init_objectness.bool(),
+                gt_init_offsets, gt_cls, gt_refine_offsets,
+                point_centers,
+                flat_and_concate_levels(init_boxes),
+                flat_and_concate_levels(refine_boxes),
+                flat_and_concate_levels(logits))
 
             losses = self.losses(
-                flat_and_concate_levels(pred_logits),
-                flat_and_concate_levels(pred_bboxes),
+                flat_and_concate_levels(logits),
+                flat_and_concate_levels(init_boxes),
+                flat_and_concate_levels(refine_boxes),
                 gt_init_objectness,
-                gt_init_bboxes,
+                gt_init_offsets,
                 gt_cls,
+                gt_refine_offsets,
                 strides)
 
             return losses
 
         else:
-            results = self.inference(pred_logits, pred_bboxes, images.image_sizes)
+            results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
 #            results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
@@ -158,9 +168,11 @@ class PointRetinaNet(RetinaNet):
             self,
             pred_logits,
             pred_init_boxes,
+            pred_refine_boxes,
             gt_init_objectness,
             gt_init_bboxes,
             gt_cls: torch.Tensor,
+            gt_refine_bboxes,
             strides):
         """
         Loss computation.
@@ -211,40 +223,43 @@ class PointRetinaNet(RetinaNet):
             gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
             0.11, reduction='sum') / max(1, gt_init_objectness.sum()) * 0.5
 
-#        coords_norm = strides[foreground_idxs].unsqueeze(-1) * 4
-#        loss_localization = smooth_l1_loss(
-#            pred_boxes[foreground_idxs] / coords_norm,
-#            gt_bboxes[foreground_idxs] / coords_norm,
-#            0.11, reduction="sum") / max(1, self.loss_normalizer)
+        coords_norm = strides[foreground_idxs].unsqueeze(-1) * 4
+        loss_localization_refine = smooth_l1_loss(
+            pred_refine_boxes[foreground_idxs] / coords_norm,
+            gt_refine_bboxes[foreground_idxs] / coords_norm,
+            0.11, reduction="sum") / max(1, self.loss_normalizer)
 
         return {"loss_cls": loss_cls,
-                "loss_localization": loss_localization_init}
+                "loss_localization_init": loss_localization_init,
+                "loss_localization_refine": loss_localization_refine}
       
-    def inference(self, logits, init_boxes, image_sizes):
+    def inference(self, logits, init_boxes, refine_boxes, image_sizes):
         results = []
 
         for img_idx, image_size in enumerate(image_sizes):
             logits_per_image = [logits_per_level[img_idx] for logits_per_level in logits]
             init_boxes_per_image = [init_boxes_per_level[img_idx]
                                     for init_boxes_per_level in init_boxes]
+            refine_boxes_per_image = [refine_boxes_per_level[img_idx]
+                                      for refine_boxes_per_level in refine_boxes]
 
             results_per_image = self.inference_single_image(
-                logits_per_image, init_boxes_per_image, tuple(image_size)
+                logits_per_image, init_boxes_per_image, refine_boxes_per_image, tuple(image_size)
             )
             results.append(results_per_image)
         return results
 
-    def inference_single_image(self, logits, init_boxes, image_size):
+    def inference_single_image(self, logits, init_boxes, refine_boxes, image_size):
         boxes_all = []
         init_boxes_all = []
         class_idxs_all = []
         scores_all = []
-        for logit, init_box in zip(logits, init_boxes):
+        for logit, init_box, refine_box in zip(logits, init_boxes, refine_boxes):
             scores, cls = logit.sigmoid().max(0)
             cls = cls.view(-1)
             scores = scores.view(-1)
             init_box = init_box.view(4, -1).permute(1, 0)
-            #refine_box = refine_box.view(4, -1).permute(1, 0)
+            refine_box = refine_box.view(4, -1).permute(1, 0)
 
             predicted_prob, topk_idxs = scores.sort(descending=True)
             num_topk = min(self.topk_candidates, cls.size(0))
@@ -256,18 +271,17 @@ class PointRetinaNet(RetinaNet):
             predicted_prob = predicted_prob[keep_idxs]
             topk_idxs = topk_idxs[keep_idxs]
             init_box_topk = init_box[topk_idxs]
-            #refine_box_topk = refine_box[topk_idxs]
+            refine_box_topk = refine_box[topk_idxs]
             cls_topk = cls[topk_idxs]
             score_topk = scores[topk_idxs]
 
-            #boxes_all.append(refine_box_topk)
-            boxes_all.append(init_box_topk)
-            #init_boxes_all.append(init_box_topk)
+            boxes_all.append(refine_box_topk)
+            init_boxes_all.append(init_box_topk)
             class_idxs_all.append(cls_topk)
             scores_all.append(score_topk)
 
-        boxes_all, scores_all, class_idxs_all = [
-            cat(x) for x in [boxes_all, scores_all, class_idxs_all]
+        boxes_all, scores_all, class_idxs_all, init_boxes_all = [
+            cat(x) for x in [boxes_all, scores_all, class_idxs_all, init_boxes_all]
         ]
         keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
         keep = keep[: self.max_detections_per_image]
@@ -276,40 +290,9 @@ class PointRetinaNet(RetinaNet):
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
+        result.init_boxes = init_boxes_all[keep]
         return result
-        
-    def offset_to_pts(self, center_list, strides, pred_list):
-        """Change from point offset to point coordinate.
-        Args:
-            X=H*W
-            C=2*num_points
-            center_list: List[[X,2]] center coordinate of features in each levels,
-                X indicates the sum of H*W of all levels.
-            strides: List[[X]] stride of each center point of features in each levels,
-            pred_list: List[[N,C,H,W]] pred bboxes of all levels
-        Return:
-            pts_list: List[[N,X,C]] 
-        """
-        #y_first!!
-        pts_list = []
-        H_i, W_i = float("inf"), float("inf")
-        start = 0
-        for i_lvl in range(len(center_list)):
-            pts_shift = pred_list[i_lvl]
-            N, C, H, W = pts_shift.shape
-            pts_center = center_list[i_lvl][:, :2].repeat(
-                N, 1, self.num_points)#[N,H*W,2*num_points]
-            #[N,C=2*num_points,H,W]->[N,H,W,C]->[N,H*W,C]
-            yx_pts_shift = pts_shift.permute(0, 2, 3, 1).view(
-                N, H*W, C)
-            y_pts_shift = yx_pts_shift[..., 0::2]
-            x_pts_shift = yx_pts_shift[..., 1::2]
-            xy_pts_shift = torch.stack([x_pts_shift, y_pts_shift], -1)
-            xy_pts_shift = xy_pts_shift.view(*yx_pts_shift.shape[:-1], -1)#[N,H*W,C]
-            pts_lvl = xy_pts_shift * strides[i_lvl] + pts_center#[N,H*W,C]
-            pts_list.append(pts_lvl)
-        return pts_list
-               
+
     def get_center_grid(self, features):
         '''
             Returns:
@@ -327,9 +310,8 @@ class PointRetinaNet(RetinaNet):
             point_centers.append(grid * stride)
             #point_centers.append(grid * stride)
         return point_centers, strides
-        #return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
-    
-    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], strides = None):
+        
+    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
         '''
             Args:
                 base_grids: List[[H*W,2]] coordinate of each feature map
@@ -352,7 +334,7 @@ class PointRetinaNet(RetinaNet):
             # (N*C/2, 2, H_i, W_i)
             delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
-            points = (delta + base_grid).view(-1, C//2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
             bbox_left = pts_x.min(dim=1, keepdim=True)[0]
@@ -363,11 +345,10 @@ class PointRetinaNet(RetinaNet):
             bbox = torch.cat(
                 [bbox_left, bbox_up, bbox_right, bbox_bottom],
                 dim=1)
-            if not strides is None:
-                bbox = bbox * strides[i]
             bboxes.append(bbox)
         return bboxes
-        
+
+                
     @torch.no_grad()
     def get_ground_truth(self, centers: torch.Tensor, strides, init_boxes, gt_instances):
         """
@@ -427,9 +408,144 @@ class PointRetinaNet(RetinaNet):
             torch.stack(init_bbox_labels),\
             torch.stack(cls_labels),\
             torch.stack(refine_bbox_labels)
+            
+            
+    def preprocess_image(self, batched_inputs):
+        """
+        Normalize, pad and batch the input images.
+        """
+        images = [x["image"].to(self.device) for x in batched_inputs]
+        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
+        return images
+        
+    @property
+    def device(self):
+        return self.pixel_mean.device
 
-                    
-class PointRetinaNetHead(nn.Module):
+
+    def visualize_training(self, batched_inputs, results):
+        """
+        A function used to visualize ground truth images and final network predictions.
+        It shows ground truth bounding boxes on the original image and up to 20
+        predicted object bounding boxes on the original image.
+
+        Args:
+            batched_inputs (list): a list that contains input to the model.
+            results (List[Instances]): a list of #images elements.
+        """
+        from detectron2.utils.visualizer import Visualizer
+
+        assert len(batched_inputs) == len(
+            results
+        ), "Cannot visualize inputs and results of different sizes"
+        if self.training:
+            storage = get_event_storage()
+        max_boxes = 100
+
+        image_index = 0  # only visualize a single image
+        img = batched_inputs[image_index]["image"].cpu().numpy()
+        assert img.shape[0] == 3, "Images should have 3 channels."
+        img = img[::-1, :, :]
+        img = img.transpose(1, 2, 0)
+
+        processed_results = detector_postprocess(results[image_index], img.shape[0], img.shape[1])
+        predicted_boxes = processed_results.pred_boxes.tensor.detach().cpu().numpy()
+        v_pred = Visualizer(img, None)
+        v_pred = v_pred.overlay_instances(boxes=predicted_boxes[0:max_boxes])
+        prop_img = v_pred.get_image()
+        if self.training:
+            v_gt = Visualizer(img, None)
+            v_gt = v_gt.overlay_instances(boxes=batched_inputs[image_index]["instances"].gt_boxes)
+            anno_img = v_gt.get_image()
+            vis_img = np.vstack((anno_img, prop_img))
+            vis_name = f"Top: GT bounding boxes; Bottom: {max_boxes} Highest Scoring Results"
+            vis_img = vis_img.transpose(2, 0, 1)
+            storage.put_image(vis_name, vis_img)
+        '''
+        else:
+            webcv2.imshow('result', prop_img)
+            webcv2.waitKey()
+        '''
+        
+        
+    def may_visualize_gt(
+            self,
+            batched_inputs,
+            init_objectness,
+            init_bbox,
+            refine_objectness,
+            refine_boxes,
+            centers,
+            pred_init_boxes,
+            pred_refine_boxes,
+            logits):
+        """
+        Visualize initial and refine boxes using mathced labels for filtering.
+        The prediction at positive positions are shown.
+        """
+        if self.training:
+            storage = get_event_storage()
+            if not storage.iter % self.vis_period == 0:
+                return
+
+        from detectron2.utils.visualizer import Visualizer
+        image_index = 0
+        img = batched_inputs[image_index]["image"].cpu().numpy()
+        assert img.shape[0] == 3, "Images should have 3 channels."
+        img = img[::-1, :, :]
+        img = img.transpose(1, 2, 0)
+
+        v_init = Visualizer(img, None)
+        v_init = v_init.overlay_instances(
+            boxes=Boxes(init_bbox[image_index][init_objectness[image_index]].cpu()))
+        init_image = v_init.get_image()
+
+        v_refine = Visualizer(img, None)
+        v_refine = v_refine.overlay_instances(
+            boxes=Boxes(refine_boxes[image_index][refine_objectness[image_index] > 0].cpu()))
+        refine_image = v_refine.get_image()
+
+        if self.training:
+            vis_img = np.vstack((init_image, refine_image))
+            vis_img = vis_img.transpose(2, 0, 1)
+            storage.put_image("TOP: init gt boxes; Bottom: refine gt boxes", vis_img)
+
+        vp_init = Visualizer(img, None)
+        selected_centers = centers[init_objectness[image_index]].cpu().numpy()
+        vp_init = vp_init.overlay_instances(
+            boxes=Boxes(pred_init_boxes[image_index][init_objectness[image_index]].detach().cpu()),
+            labels=logits[image_index][init_objectness[image_index]].sigmoid().max(1)[0].detach().cpu())
+        init_image = vp_init.get_image()
+
+        for point in selected_centers:
+            init_image = cv2.circle(init_image, tuple(point), 3, (255, 255, 255))
+
+        vp_refine = Visualizer(img, None)
+        foreground_idxs = (refine_objectness[image_index] >= 0).logical_and(
+            refine_objectness[image_index] < self.num_classes)
+        selected_centers = centers[foreground_idxs].cpu().numpy()
+        vp_refine = vp_refine.overlay_instances(
+            boxes=pred_refine_boxes[image_index][foreground_idxs].detach().cpu(),
+            labels=logits[image_index][foreground_idxs].sigmoid().max(1)[0].detach().cpu())
+        refine_image = vp_refine.get_image()
+        for point in selected_centers:
+            refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
+        
+        vis_img = np.vstack((init_image, refine_image))
+        #vis_img = np.vstack((init_image.get(), refine_image.get()))
+        if self.training:
+            vis_img = vis_img.transpose(2, 0, 1)
+            storage.put_image("TOP: init pred boxes; Bottom: refine pred boxes", vis_img)
+        # NOTE: This is commented temporarily. Uncomment it if
+        # eagerly visualization is desired.
+        '''
+        else:
+            webcv2.imshow('pred', vis_img)
+            webcv2.waitKey()
+        '''
+        
+class ReppointsRetinaNetHead(nn.Module):
 
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__()
@@ -441,7 +557,8 @@ class PointRetinaNetHead(nn.Module):
         prior_prob       = cfg.MODEL.RETINANET.PRIOR_PROB
         #please add it in cfg!
         self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
-        self.in_channels = in_channels
+        self.point_feat_channels = 256
+        self.cls_out_channels = num_classes - 1# maybe not right
 #        num_anchors      = build_anchor_generator(cfg, input_shape).num_cell_anchors
 #        # fmt: on
 #        assert (
@@ -449,80 +566,118 @@ class PointRetinaNetHead(nn.Module):
 #        ), "Using different number of anchors between levels is not currently supported!"
 #        num_anchors = num_anchors[0]
         
-        self.cls_subnet = nn.Sequential(
+        #dcn_base_offset
+        self.dcn_kernel = int(np.sqrt(self.num_points))
+        # 1 for kernel 3.
+        self.dcn_pad = int((self.dcn_kernel - 1) / 2)
+        dcn_base = np.arange(-self.dcn_pad,
+                             self.dcn_pad + 1).astype(np.float64)
+        dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
+        dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
+        dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
+        dcn_base_offset = torch.tensor(dcn_base_offset, dtype=torch.float32).view(1, -1, 1, 1)
+        self.register_buffer("dcn_base_offset", dcn_base_offset)
+        
+        self.gradient_mul = 0.1
+        
+        self.cls_conv = nn.Sequential(
             *self.stacked_convs())
-        self.bbox_subnet = nn.Sequential(
+        self.reg_conv = nn.Sequential(
             *self.stacked_convs())
-        self.bbox_pred = nn.Sequential(
-            nn.Conv2d(self.in_channels,
-                      self.in_channels,
+
+        self.deform_cls_conv = DeformConv(
+            self.point_feat_channels,
+            self.point_feat_channels,
+            self.dcn_kernel, 1, self.dcn_pad)
+        self.deform_reg_conv = DeformConv(
+            self.point_feat_channels,
+            self.point_feat_channels,
+            self.dcn_kernel, 1, self.dcn_pad)
+
+        points_out_dim = 2 * self.num_points
+        self.offsets_init = nn.Sequential(
+            nn.Conv2d(self.point_feat_channels,
+                      self.point_feat_channels,
                       3, 1, 1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(self.in_channels,
-                      2*self.num_points,
+            nn.Conv2d(self.point_feat_channels,
+                      points_out_dim,
                       1, 1, 0))
-        self.cls_score = nn.Sequential(
-            nn.ReLU(),
-            nn.Conv2d(self.in_channels,
-                      num_classes,
-                      1, 1, 0))
-#        cls_subnet = []
-#        bbox_subnet = []
-#        for _ in range(num_convs):
-#            cls_subnet.append(
-#                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
-#            )
-#            cls_subnet.append(nn.ReLU())
-#            bbox_subnet.append(
-#                nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
-#            )
-#            bbox_subnet.append(nn.ReLU())
-#
-#        self.cls_subnet = nn.Sequential(*cls_subnet)
-#        self.bbox_subnet = nn.Sequential(*bbox_subnet)
-#        self.cls_score = nn.Conv2d(
-#            in_channels, self.num_points*num_classes, kernel_size=3, stride=1, padding=1
-#        )
-#        self.bbox_pred = nn.Conv2d(in_channels, 2*self.num_points, kernel_size=3, stride=1, padding=1)
 
-        
-        
-        # Initialization
-        for modules in [self.cls_subnet, self.bbox_subnet, self.cls_score, self.bbox_pred]:
+        self.offsets_refine = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(self.point_feat_channels,
+                      points_out_dim,
+                      1, 1, 0))
+        self.logits = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(self.point_feat_channels,
+                      self.cls_out_channels,
+                      1, 1, 0))
+
+        bias_init = float(-np.log((1 - 0.01) / 0.01))
+        for modules in [
+                self.cls_conv,
+                self.reg_conv,
+                self.offsets_init,
+                self.offsets_refine,
+                self.deform_cls_conv,
+                self.deform_reg_conv]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
                     torch.nn.init.normal_(layer.weight, mean=0, std=0.01)
                     torch.nn.init.constant_(layer.bias, 0)
 
-#        # Use prior in model initialization to improve stability
-#        bias_value = -(math.log((1 - prior_prob) / prior_prob))
-#        torch.nn.init.constant_(self.cls_score.bias, bias_value)
-        bias_value = -(math.log((1 - prior_prob) / prior_prob))
-        for module in self.cls_score.modules():
+        for module in self.logits.modules():
             if hasattr(module, 'bias') and module.bias is not None:
-                torch.nn.init.constant_(module.bias, bias_value)
-                
+                torch.nn.init.constant_(module.bias, bias_init)
+
     def stacked_convs(self, layers=3):
         convs = []
         for _ in range(layers):
             convs.append(
                 nn.Sequential(
                     nn.Conv2d(
-                        self.in_channels,
-                        self.in_channels,
+                        self.point_feat_channels,
+                        self.point_feat_channels,
                         kernel_size=3, stride=1, padding=1),
-                    nn.GroupNorm(32, self.in_channels),
+                    nn.GroupNorm(32, self.point_feat_channels),
                     nn.ReLU(inplace=True)
                 ))
         return convs
         
     def forward(self, features):
+    
+        logits = []
+        offsets_refine = []
+        cls_features = [self.cls_conv(f) for f in features]
+        reg_features = [self.reg_conv(f) for f in features]
+
+        offsets_init = [self.offsets_init(f) for f in reg_features]
 
         logits = []
-        bbox_reg = []
-        for feature in features:
-            logits.append(self.cls_score(self.cls_subnet(feature)))
-            bbox_reg.append(self.bbox_pred(self.bbox_subnet(feature)))
-        return logits, bbox_reg
+        offsets_refine = []
+        for i in range(len(cls_features)):
+            pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init[i].detach()\
+                + self.gradient_mul * offsets_init[i]
+            # N, 18, H, W --> N, 9, 2(x, y), H, W --> N, 9, 2(y, x), H, W
+            # BUGGY: assuming self.num_points == 9
+            pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
+                pts_out_init_grad_mul.size(0),
+                9, 2,
+                *pts_out_init_grad_mul.shape[-2:]
+            ).flip(2)
+            pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
+                -1, 18, *pts_out_init_grad_mul.shape[-2:])
+            dcn_offset = pts_out_init_grad_mul - self.dcn_base_offset
+
+            logits.append(
+                self.logits(self.deform_cls_conv(cls_features[i], dcn_offset)))
+            offsets_refine.append(
+                self.offsets_refine(
+                    self.deform_reg_conv(reg_features[i], dcn_offset)) +
+                    #self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
+                offsets_init[i].detach())
+        return logits, offsets_init, offsets_refine
 
 

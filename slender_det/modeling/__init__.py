@@ -7,8 +7,6 @@ from .meta_arch import (
     RetinaNetWithAnchor,
     FCOSWithAnchor,
     ProposalVisibleRCNNWithAnchor,
-    DeformableConvRetinaNet,
-    PointRetinaNet,
 )
 
 from .proposal_generator import (

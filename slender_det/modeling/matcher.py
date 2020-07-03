@@ -3,7 +3,7 @@ import torch
 from detectron2.utils.memory import retry_if_cuda_oom
 from detectron2.structures import Boxes
 
-from ...structures.points import pairwise_dist, stride_match
+from slender_det.structures.points import pairwise_dist, stride_match
 
 
 def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
