@@ -47,8 +47,8 @@ class PointRetinaNet(RetinaNet):
         
         # Assigning init box labels.
         if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
-            from slender_det.modeling.matcher import rep_points_match
-            self.matcher = rep_points_match
+            from slender_det.modeling.matcher import rep_points_match_with_classes
+            self.matcher = rep_points_match_with_classes
         elif cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'nearest_points':
             from slender_det.modeling.matcher import nearest_point_match
             self.matcher = nearest_point_match
@@ -111,7 +111,7 @@ class PointRetinaNet(RetinaNet):
             #important!!
             #init_bbox and refine_bbox are assign by different matcher: nearest vs IoU
             #here we use IoU assign
-            gt_init_objectness, gt_init_bboxes, gt_cls, gt_refine_bboxes =\
+            gt_cls, gt_init_bboxes =\
                 self.get_ground_truth(point_centers, strides,
                                       flat_and_concate_levels(pred_bboxes), gt_instances)
             
@@ -134,7 +134,6 @@ class PointRetinaNet(RetinaNet):
             losses = self.losses(
                 flat_and_concate_levels(pred_logits),
                 flat_and_concate_levels(pred_bboxes),
-                gt_init_objectness,
                 gt_init_bboxes,
                 gt_cls,
                 strides)
@@ -158,7 +157,6 @@ class PointRetinaNet(RetinaNet):
             self,
             pred_logits,
             pred_init_boxes,
-            gt_init_objectness,
             gt_init_bboxes,
             gt_cls: torch.Tensor,
             strides):
@@ -204,12 +202,11 @@ class PointRetinaNet(RetinaNet):
         ) / max(1, self.loss_normalizer)
 
         strides = strides[None].repeat(pred_logits.shape[0], 1)
-        init_foreground_idxs = gt_init_objectness > 0
-        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
+        coords_norm_init = strides[foreground_idxs].unsqueeze(-1) * 4
         loss_localization_init = smooth_l1_loss(
-            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
-            gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
-            0.11, reduction='sum') / max(1, gt_init_objectness.sum()) * 0.5
+            pred_init_boxes[foreground_idxs] / coords_norm_init,
+            gt_init_bboxes[foreground_idxs] / coords_norm_init,
+            0.11, reduction='sum') / max(1, self.loss_normalizer)
 
 #        coords_norm = strides[foreground_idxs].unsqueeze(-1) * 4
 #        loss_localization = smooth_l1_loss(
@@ -278,37 +275,6 @@ class PointRetinaNet(RetinaNet):
         result.pred_classes = class_idxs_all[keep]
         return result
         
-    def offset_to_pts(self, center_list, strides, pred_list):
-        """Change from point offset to point coordinate.
-        Args:
-            X=H*W
-            C=2*num_points
-            center_list: List[[X,2]] center coordinate of features in each levels,
-                X indicates the sum of H*W of all levels.
-            strides: List[[X]] stride of each center point of features in each levels,
-            pred_list: List[[N,C,H,W]] pred bboxes of all levels
-        Return:
-            pts_list: List[[N,X,C]] 
-        """
-        #y_first!!
-        pts_list = []
-        H_i, W_i = float("inf"), float("inf")
-        start = 0
-        for i_lvl in range(len(center_list)):
-            pts_shift = pred_list[i_lvl]
-            N, C, H, W = pts_shift.shape
-            pts_center = center_list[i_lvl][:, :2].repeat(
-                N, 1, self.num_points)#[N,H*W,2*num_points]
-            #[N,C=2*num_points,H,W]->[N,H,W,C]->[N,H*W,C]
-            yx_pts_shift = pts_shift.permute(0, 2, 3, 1).view(
-                N, H*W, C)
-            y_pts_shift = yx_pts_shift[..., 0::2]
-            x_pts_shift = yx_pts_shift[..., 1::2]
-            xy_pts_shift = torch.stack([x_pts_shift, y_pts_shift], -1)
-            xy_pts_shift = xy_pts_shift.view(*yx_pts_shift.shape[:-1], -1)#[N,H*W,C]
-            pts_lvl = xy_pts_shift * strides[i_lvl] + pts_center#[N,H*W,C]
-            pts_list.append(pts_lvl)
-        return pts_list
                
     def get_center_grid(self, features):
         '''
@@ -327,9 +293,8 @@ class PointRetinaNet(RetinaNet):
             point_centers.append(grid * stride)
             #point_centers.append(grid * stride)
         return point_centers, strides
-        #return torch.cat(point_centers, dim=0), torch.cat(strides, dim=0)
-    
-    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], strides = None):
+        
+    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
         '''
             Args:
                 base_grids: List[[H*W,2]] coordinate of each feature map
@@ -352,7 +317,7 @@ class PointRetinaNet(RetinaNet):
             # (N*C/2, 2, H_i, W_i)
             delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
-            points = (delta + base_grid).view(-1, C//2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
             bbox_left = pts_x.min(dim=1, keepdim=True)[0]
@@ -363,8 +328,6 @@ class PointRetinaNet(RetinaNet):
             bbox = torch.cat(
                 [bbox_left, bbox_up, bbox_right, bbox_bottom],
                 dim=1)
-            if not strides is None:
-                bbox = bbox * strides[i]
             bboxes.append(bbox)
         return bboxes
         
@@ -406,27 +369,14 @@ class PointRetinaNet(RetinaNet):
                 centers[:, 1] >= image_size[0])
 
             init_objectness_label, init_bbox_label = self.matcher(
-                centers, strides, targets_per_image.gt_boxes)
-            init_objectness_label[centers_invalid] = 0
-
-            match_quality_matrix = pairwise_iou(
-                targets_per_image.gt_boxes,
-                Boxes(init_boxes[i]))
-            gt_matched_idxs, bbox_mached = self.bbox_matcher(match_quality_matrix)
-            cls_label = targets_per_image.gt_classes[gt_matched_idxs]
-            cls_label[bbox_mached == 0] = self.num_classes
-            cls_label[centers_invalid] = -1
-            refine_bbox_label = targets_per_image.gt_boxes[gt_matched_idxs]
+                centers, strides, targets_per_image.gt_boxes, targets_per_image.gt_classes)
+            init_objectness_label[centers_invalid] = -1
 
             init_objectness_labels.append(init_objectness_label)
             init_bbox_labels.append(init_bbox_label)
-            cls_labels.append(cls_label)
-            refine_bbox_labels.append(refine_bbox_label.tensor)
 
         return torch.stack(init_objectness_labels),\
-            torch.stack(init_bbox_labels),\
-            torch.stack(cls_labels),\
-            torch.stack(refine_bbox_labels)
+            torch.stack(init_bbox_labels)
 
                     
 class PointRetinaNetHead(nn.Module):

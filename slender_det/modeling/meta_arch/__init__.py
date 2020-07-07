@@ -10,4 +10,5 @@ from .pvrcnnwa import ProposalVisibleRCNNWithAnchor
 from .fcos_anchor import FCOSAnchor
 from .rpd import RepPointsDetector
 from .retinadc import DeformableConvRetinaNet
+from .retina_reppoints import ReppointsRetinaNet
 from .retina_points import PointRetinaNet
