@@ -10,6 +10,9 @@ from .meta_arch import (
     DeformableConvRetinaNet,
     PointRetinaNet,
     ReppointsRetinaNet,
+    FCOSRetinaNet,
+    FCOSNCRetinaNet,
+    CenternessRetinaNet
 )
 
 from .proposal_generator import (

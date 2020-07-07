@@ -46,4 +46,4 @@ INPUT:
 VERSION: 2
 
 
-OUTPUT_DIR: ./train_log/0616_base_faster_rcnn_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0617_base_faster_rcnn_R_50_FPN_1x
