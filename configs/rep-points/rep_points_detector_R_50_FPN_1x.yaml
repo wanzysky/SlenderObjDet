@@ -15,4 +15,5 @@ MODEL:
 SOLVER:
   WARMUP_FACTOR: 0.33
 
-OUTPUT_DIR: ./train_log/0703_nostride_rep_points_detector
+
+OUTPUT_DIR: ./train_log/0626_stride124816_rep_points_detector_R_50_FPN_GN_1x_nearest_points

@@ -464,7 +464,7 @@ class PointRetinaNetHead(nn.Module):
         self.cls_score = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(self.in_channels,
-                      num_classes,
+                      self.num_points*num_classes,
                       1, 1, 0))
 #        cls_subnet = []
 #        bbox_subnet = []
@@ -501,7 +501,6 @@ class PointRetinaNetHead(nn.Module):
         for module in self.cls_score.modules():
             if hasattr(module, 'bias') and module.bias is not None:
                 torch.nn.init.constant_(module.bias, bias_value)
-                
     def stacked_convs(self, layers=3):
         convs = []
         for _ in range(layers):
