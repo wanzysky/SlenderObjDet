@@ -11,7 +11,7 @@ from detectron2.structures.boxes import Boxes
 from concern.support import make_dual
 from concern import webcv2
 
-
+import torch
 @lru_cache()
 def standard_linear(resolution=128, reverse=False):
     grid = (np.mgrid[0:resolution, 0:resolution] / resolution).astype(np.float32).sum(0)
@@ -168,7 +168,36 @@ class BorderMasks(PolygonMasks):
     Attributes:
         polygons: list[list[ndarray]]. Each ndarray is a float64 vector representing a polygon.
     """
+    def __getitem__(self, item: Union[int, slice, List[int], torch.BoolTensor]) -> "PolygonMasks":
+        """
+        Support indexing over the instances and return a `PolygonMasks` object.
+        `item` can be:
 
+        1. An integer. It will return an object with only one instance.
+        2. A slice. It will return an object with the selected instances.
+        3. A list[int]. It will return an object with the selected instances,
+           correpsonding to the indices in the list.
+        4. A vector mask of type BoolTensor, whose length is num_instances.
+           It will return an object with the instances whose mask is nonzero.
+        """
+        if isinstance(item, int):
+            selected_polygons = [self.polygons[item]]
+        elif isinstance(item, slice):
+            selected_polygons = self.polygons[item]
+        elif isinstance(item, list):
+            selected_polygons = [self.polygons[i] for i in item]
+        elif isinstance(item, torch.Tensor):
+            # Polygons is a list, so we have to move the indices back to CPU.
+            if item.dtype == torch.bool:
+                assert item.dim() == 1, item.shape
+                item = item.nonzero().squeeze(1).cpu().numpy().tolist()
+            elif item.dtype in [torch.int32, torch.int64]:
+                item = item.cpu().numpy().tolist()
+            else:
+                raise ValueError("Unsupported tensor dtype={} for indexing!".format(item.dtype))
+            selected_polygons = [self.polygons[i] for i in item]
+        return BorderMasks(selected_polygons)
+        
     def masks(
         self,
         mask:np.ndarray=None,

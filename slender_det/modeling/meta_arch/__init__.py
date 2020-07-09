@@ -15,3 +15,4 @@ from .retina_points import PointRetinaNet
 from .retina_fcosv2 import FCOSRetinaNet
 from .retina_fcosv2_nc import FCOSNCRetinaNet
 from .retina_centerness_assign import CenternessRetinaNet
+from .fcosv3 import FCOSV3
