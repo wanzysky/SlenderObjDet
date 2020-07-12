@@ -596,16 +596,11 @@ class RepPointsDetector(nn.Module):
             dict[str: Tensor]:
                 mapping from a named loss to a tensor storing the loss. Used during training only.
         """
-        torch.cuda.synchronize()
-        start = time.time()
         images = self.preprocess_image(batched_inputs)
         if "instances" in batched_inputs[0]:
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         else:
             gt_instances = None
-        torch.cuda.synchronize()
-        print("pre process", time.time() - start)
-        start = time.time()
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
@@ -614,9 +609,6 @@ class RepPointsDetector(nn.Module):
         reg_features = [self.reg_conv(f) for f in features]
 
         offsets_init = [self.offsets_init(f) for f in reg_features]
-        torch.cuda.synchronize()
-        print("feature", time.time() - start)
-        start = time.time()
 
         logits = []
         offsets_refine = []
@@ -641,9 +633,6 @@ class RepPointsDetector(nn.Module):
                     self.deform_reg_conv(reg_features[i], dcn_offset)) +
                 offsets_init[i].detach())
 
-        torch.cuda.synchronize()
-        print("pred", time.time() - start)
-        start = time.time()
         point_centers, strides = self.get_center_grid(features)
 
         init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
@@ -651,18 +640,12 @@ class RepPointsDetector(nn.Module):
 
         point_centers = torch.cat(point_centers, 0)
         strides = torch.cat(strides, 0)
-        torch.cuda.synchronize()
-        print("post-process", time.time() - start)
-        start = time.time()
 
         if self.training:
             gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
                 self.get_ground_truth(point_centers, strides,
                                       flat_and_concate_levels(init_boxes), gt_instances)
 
-            print("get gt", time.time() - start)
-            start = time.time()
-            torch.cuda.synchronize()
             storage = get_event_storage()
             # This condition is keeped as the code is from RetinaNet in D2.
             if self.vis_period > 0 and storage.iter % self.vis_period == 0:
@@ -676,9 +659,6 @@ class RepPointsDetector(nn.Module):
                 flat_and_concate_levels(init_boxes),
                 flat_and_concate_levels(refine_boxes),
                 flat_and_concate_levels(logits))
-            torch.cuda.synchronize()
-            print("visualize", time.time() - start)
-            start = time.time()
 
             losses = self.losses(
                 flat_and_concate_levels(logits),
@@ -689,9 +669,6 @@ class RepPointsDetector(nn.Module):
                 gt_cls,
                 gt_refine_offsets,
                 strides)
-            torch.cuda.synchronize()
-            print("loss", time.time() - start)
-            start = time.time()
 
             return losses
         else:
