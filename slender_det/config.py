@@ -66,6 +66,33 @@ _C.MODEL.FCOS.USE_DCN_V2 = True
 _C.MODEL.FCOS.SMOOTH_L1_LOSS_BETA = 0.1
 
 
+# -------------------------------------------------------------------------------#
+# Defomrable parts models
+# -------------------------------------------------------------------------------#
+
+DPM = CN()
+DPM.FOCAL_LOSS_ALPHA = 0.25
+DPM.FOCAL_LOSS_GAMMA = 2.0
+DPM.NUM_CLASSES = 80
+DPM.NUM_CONVS = 4
+DPM.PRIOR_PROB = 0.01
+DPM.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+
+# Transformer head
+DPM.NHEADS = 8
+DPM.DROPOUT = 0.1
+DPM.DIM_FEEDFORWARD = 2048
+DPM.HIDDEN_DIM = 256
+DPM.ENC_LAYERS = 6
+DPM.DEC_LAYERS = 6
+DPM.NUM_OBJECT_QUERIES = 100
+DPM.FPN_STRIDES = [8, 16, 32, 64, 128]
+DPM.CENTER_SAMPLING_RADIUS = 0.0
+DPM.NORM_REG_TARGETS = False
+DPM.SMOOTH_L1_LOSS_BETA = 0.1
+_C.MODEL.DPM = DPM
+
+
 def get_cfg() -> CN:
     """
     Get a copy of the default config.

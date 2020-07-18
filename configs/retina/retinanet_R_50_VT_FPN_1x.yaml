@@ -4,6 +4,10 @@ MODEL:
   RESNETS:
     DEPTH: 50
 
+SOLVER:
+  STEPS: (120000, 160000)
+  MAX_ITER: 180000
+
 VIS_PERIOD: 1024
 OUTPUT_DIR: ./train_log/retinanet_R_50_FPN_1x
 
