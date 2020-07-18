@@ -11,6 +11,7 @@ from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.modeling.backbone import build_backbone
 from detectron2.structures import Boxes, ImageList, Instances
+from detectron2.utils.events import get_event_storage
 from detectron2.layers import ShapeSpec, cat
 
 from ...layers import Scale
@@ -58,6 +59,7 @@ class DeformableParts(nn.Module):
         self.part_head = PartsHead(cfg, feature_shapes)
         self.dense_head = TransformerNonLocal(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
+        self.loss_nominator = torch.tensor(1e-3)
         self.to(self.device)
 
     @property
@@ -176,8 +178,18 @@ class DeformableParts(nn.Module):
                 gt_boxes[foreground_idxs],
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
-
             loss_box, loss_box_indices = loss_box.sort(dim=1)
+            loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
+            loss_relations_w = F.sigmoid(loss_relations_w).unsqueeze(1)
+
+            loss_relation = smooth_l1_loss(
+                connected_boxes[foreground_idxs],
+                gt_boxes[foreground_idxs],
+                beta=self.smooth_l1_loss_beta,
+                reduction="none") / strides[foreground_idxs]
+            get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
+            loss_relation = loss_relations_w * loss_relation
+
             loss_box = loss_box[:, :-1].sum() + loss_box[:, -1].sum() * 1e-2 +\
                 pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -1:]).sum() * 1e-3
             loss_box = loss_box / num_pos_avg_per_gpu

@@ -58,6 +58,12 @@ class TransformerNonLocal(nn.Module):
         return relations
 
 
+"""
+class Conv2dNonLocal(nn.Module):
+    def __init__(self, )
+"""
+
+
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
