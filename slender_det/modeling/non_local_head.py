@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from detectron2.layers import get_norm
+
 from .transformer import Transformer
 
 
@@ -87,7 +89,7 @@ class NonLocalBlock2D(nn.Module):
                  in_channels,
                  inter_channels=None,
                  sub_sample=True,
-                 bn_layer=True):
+                 bn_layer=False):
         super(NonLocalBlock2D, self).__init__()
 
         self.sub_sample = sub_sample
@@ -101,7 +103,7 @@ class NonLocalBlock2D(nn.Module):
                 self.inter_channels = 1
 
         max_pool_layer = nn.MaxPool2d(kernel_size=(2, 2))
-        bn = nn.BatchNorm2d
+        bn = "GN"
 
         self.g = nn.Conv2d(in_channels=self.in_channels,
                            out_channels=self.inter_channels,
@@ -115,7 +117,7 @@ class NonLocalBlock2D(nn.Module):
                           out_channels=self.in_channels,
                           kernel_size=1,
                           stride=1,
-                          padding=0), bn(self.in_channels))
+                          padding=0), get_norm(bn, self.in_channels))
             nn.init.constant_(self.W[1].weight, 0)
             nn.init.constant_(self.W[1].bias, 0)
         else:
