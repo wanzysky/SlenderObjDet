@@ -51,11 +51,11 @@ class DeformableParts(nn.Module):
         hidden_dim = cfg.MODEL.DPM.HIDDEN_DIM
         N_steps = hidden_dim // 2
         d2_backbone = MaskedBackbone(cfg)
-        self.backbone = Joiner(
-            d2_backbone, PositionEmbeddingSine(N_steps, normalize=True))
+        self.backbone = d2_backbone
         self.backbone.num_channels = d2_backbone.num_channels
         backbone_shape = d2_backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
+        self.embedding = PartsEmbeddingSine()
         self.part_head = PartsHead(cfg, feature_shapes)
         self.dense_head = TransformerNonLocal(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
@@ -73,17 +73,14 @@ class DeformableParts(nn.Module):
         else:
             gt_instances = None
 
-        nested_features, pos = self.backbone(images)
-        nested_features = [nested_features[f] for f in self.in_features]
-        pos = [pos[f] for f in self.in_features]
-        features = []
-        masks = []
-        for nested_feature in nested_features:
-            src, mask = nested_feature.decompose()
-            features.append(src)
-            masks.append(mask)
+        nested_features = self.backbone(images)
+        features = [nested_features[f].tensors for f in self.in_features]
+        masks = [nested_features[f].mask for f in self.in_features]
 
         part_scores, part_boxes, part_confidences = self.part_head(features)
+
+        pos = [self.embedding(m, s, b)
+               for m, s, b in zip(masks, part_scores, part_boxes)]
         relation = self.dense_head(features, masks, pos)
 
         shapes = [feature.shape[-2:] for feature in features]
@@ -190,7 +187,7 @@ class DeformableParts(nn.Module):
             get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
             loss_relation = loss_relations_w * loss_relation
 
-            loss_box = loss_box[:, :-1].sum() + loss_box[:, -1].sum() * 1e-2 +\
+            loss_box = loss_box[:, :-1].sum() +\
                 pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -1:]).sum() * 1e-3
             loss_box = loss_box / num_pos_avg_per_gpu
 
@@ -203,7 +200,7 @@ class DeformableParts(nn.Module):
 
         return {"loss_cls": loss_cls,
                 "loss_box": loss_box,
-                "loss_relation": loss_relation,
+                # "loss_relation": loss_relation,
                 "loss_confidence": pred_confidences.mean()}
 
     def preprocess_image(self, batched_inputs):
@@ -270,6 +267,7 @@ class PartsHead(nn.Module):
         self.logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
         self.boxes = nn.Conv2d(in_channels, 4, kernel_size=3, padding=1, stride=1)
         self.confidences = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
+        self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
 
         self.add_module("cls_head", nn.Sequential(*cls_head))
         self.add_module("box_head", nn.Sequential(*box_head))
@@ -298,7 +296,7 @@ class PartsHead(nn.Module):
             logits.append(self.logits(self.cls_head(feature)))
             box_feature = self.box_head(feature)
             box_pred = self.scales[l](self.boxes(box_feature))
-            boxes.append(torch.exp(box_pred))
+            boxes.append(torch.exp(self.scales[l](box_pred)))
             confidences.append(self.confidences(box_feature))
         return logits, boxes, confidences
 
@@ -422,3 +420,44 @@ class PositionEmbeddingSine(nn.Module):
         return pos
 
 
+class PartsEmbeddingSine(nn.Module):
+    def __init__(self, num_pos_feats=64, temperature=10000, normalize=False, scale=None):
+        super().__init__()
+        self.num_pos_feats = num_pos_feats
+        self.temperature = temperature
+        self.normalize = normalize
+        if scale is not None and normalize is False:
+            raise ValueError("normalize should be True if scale is passed")
+        if scale is None:
+            scale = 2 * math.pi
+        self.scale = scale
+
+    def forward(self, mask, logits, parts):
+        assert mask is not None
+        not_mask = ~mask
+        y_embed = not_mask.cumsum(1, dtype=torch.float32)
+        x_embed = not_mask.cumsum(2, dtype=torch.float32)
+        if self.normalize:
+            eps = 1e-6
+            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
+            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
+
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=parts.device)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+
+        pos_x = x_embed[:, :, :, None] / dim_t
+        pos_y = y_embed[:, :, :, None] / dim_t
+        pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+
+
+        x_embed = F.interpolate(x_embed.unsqueeze(1), (h, w)).squeeze(1) * 4
+        y_embed = F.interpolate(y_embed.unsqueeze(1), (h, w)).squeeze(1) * 4
+        parts_embed = torch.stack([x_embed - parts[:, 0], y_embed - parts[:, 1],
+            x_embed + parts[:, 2], y_embed - parts[:, 3]], dim=1)
+        parts_embed = parts_embed / 64
+
+
+
+        return pos
