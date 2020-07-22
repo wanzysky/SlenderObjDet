@@ -41,6 +41,7 @@ def ratio_of_bbox(bbox):
     w = bbox[2] - bbox[0]
     h = bbox[3] - bbox[1]
 
+    return w / h
     return min(w, h) / max(w, h)
 
 
