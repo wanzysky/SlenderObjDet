@@ -8,9 +8,7 @@ from slender_det.structures.masks import PolygonMasks
 
 
 class COCO(Base):
-    oriented = False
-
-    def __init__(self, annotation_file=None, oriented=False):
+    def __init__(self, annotation_file=None, oriented=True):
         """
         Constructor of Microsoft COCO helper class for reading and visualizing annotations.
         :param annotation_file (str): location of annotation file
@@ -29,8 +27,6 @@ class COCO(Base):
 
         if 'annotations' in self.dataset:
             for ann in self.dataset['annotations']:
-                if ann["bbox"][2] * ann["bbox"][3] < 96**2:
-                    continue
                 imgToAnns[ann['image_id']].append(ann)
                 self.compute_ratio(ann)
                 anns[ann['id']] = ann
@@ -57,11 +53,19 @@ class COCO(Base):
         self.cats = cats
 
     @classmethod
-    def compute_ratio(self, ann):
+    def compute_ratio(self, ann, oriented=None):
+        if oriented is None:
+            oriented = self.oriented
+
         if ann["iscrowd"]:
-            ann["ratio"] = ann["bbox"][2] / ann["bbox"][3]
+            w, h = ann["bbox"][2], ann["bbox"][3]
+            if not oriented:
+                ann["ratio"] = w / h
+            else:
+                ann["ratio"] = min(w, h) / max(w, h)
             return ann
 
         segmentations = PolygonMasks([ann["segmentation"]])
-        ann["ratio"] = segmentations.get_ratios(oriented=self.oriented)[0]
+        ratio = segmentations.get_ratios(oriented=oriented)[0]
+        ann["ratio"] = ratio
         return ann
