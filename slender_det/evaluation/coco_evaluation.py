@@ -68,8 +68,8 @@ class COCOEvaluator(Base):
             convert_to_coco_json(dataset_name, cache_path)
 
         json_file = PathManager.get_local_path(self._metadata.json_file)
-        with contextlib.redirect_stdout(io.StringIO()):
-            self._coco_api = COCO(json_file)
+        # with contextlib.redirect_stdout(io.StringIO()):
+        self._coco_api = COCO(json_file)
 
         self._kpt_oks_sigmas = cfg.TEST.KEYPOINT_OKS_SIGMAS
         # Test set json files do not contain annotations (evaluation must be
@@ -226,7 +226,7 @@ class COCOEvaluator(Base):
     def _evaluate_predictions_ar(self, predictions):
         res = {}
         aspect_ratios = {
-            "all": "", "l1": " 0  - 1/5", "l2": "1/5 - 1/3", "l3": "1/3 - 3/1",
+            "all": "", "l1": " 0  - 1/8", "l2": "1/8 - 1/4", "l3": "1/4 - 4/1",
             "l4": "3/1 - 5/1", "l5": "5/1 - INF",
         }
         limits = [100]
@@ -251,9 +251,9 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
     }
     aspect_ratio_ranges = [
         [0 / 1, 1e3 / 1],
-        [0 / 1, 1 / 5],
-        [1 / 5, 1 / 3],
-        [1 / 3, 3 / 1],
+        [0 / 1, 1 / 8],
+        [1 / 8, 1 / 4],
+        [1 / 4, 4 / 1],
         [3 / 1, 5 / 1],
         [5 / 1, 1e3 / 1],
     ]

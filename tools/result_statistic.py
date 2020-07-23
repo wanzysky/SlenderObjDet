@@ -36,8 +36,6 @@ def reconstruct_ann(dic):
     for obj in dic:
         ratio = COCO.compute_ratio(obj)
         obj["ratio"] = ratio
-
-        area = obj["bbox"][2] * obj["bbox"][3]
         result.append(obj)
 
     return result
@@ -50,13 +48,9 @@ def create_instances(prediction, image_size):
     pred_boxes = []
     pred_classes = []
     for instance in prediction["instances"]:
-        area = instance["bbox"][2] * instance["bbox"][3]
-        if area < 96**2:
-            continue
         scores.append(instance["score"])
         pred_boxes.append(instance["bbox"])
         pred_classes.append(instance["category_id"])
-
 
     scores = np.asarray(scores)
     pred_boxes = np.asarray(pred_boxes).reshape(-1, 4)
