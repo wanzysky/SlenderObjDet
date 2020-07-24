@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from detectron2.layers import get_norm
+from detectron2.layers import get_norm, cat
 
 from .transformer import Transformer
 
@@ -82,8 +82,8 @@ class Conv2dNonLocal(nn.Module):
 
         self.conv = nn.Conv2d(
             in_channels, hidden_dim,
-            kernel_size=3, padding=1, stride=1)
-        self.non_local = NonLocalBlock2D(hidden_dim, hidden_dim)
+            kernel_size=3, padding=1, stride=2)
+        self.non_local = NonLocalBlock2D(hidden_dim+in_channels, hidden_dim)
 
     def forward(self, features, masks, poses):
         relations = []
@@ -91,6 +91,8 @@ class Conv2dNonLocal(nn.Module):
             assert mask is not None
             n, c, h, w = src.shape
             memory = self.conv(src)
+            memory = cat([memory, pos], dim=1)
+            memory = F.interpolate(memory, size=(h, w))
             relation = self.non_local(memory)
             relations.append(relation)
 
