@@ -60,12 +60,6 @@ class TransformerNonLocal(nn.Module):
         return relations
 
 
-"""
-class Conv2dNonLocal(nn.Module):
-    def __init__(self, )
-"""
-
-
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
@@ -79,6 +73,28 @@ class MLP(nn.Module):
         for i, layer in enumerate(self.layers):
             x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
+
+
+class Conv2dNonLocal(nn.Module):
+    def __init__(self, cfg, in_channels):
+        super(Conv2dNonLocal, self).__init__()
+        hidden_dim = cfg.MODEL.DPM.HIDDEN_DIM
+
+        self.conv = nn.Conv2d(
+            in_channels, hidden_dim,
+            kernel_size=3, padding=1, stride=1)
+        self.non_local = NonLocalBlock2D(hidden_dim, hidden_dim)
+
+    def forward(self, features, masks, poses):
+        relations = []
+        for src, mask, pos in zip(features, masks, poses):
+            assert mask is not None
+            n, c, h, w = src.shape
+            memory = self.conv(src)
+            relation = self.non_local(memory)
+            relations.append(relation)
+
+        return relations
 
 
 class NonLocalBlock2D(nn.Module):
