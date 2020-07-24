@@ -15,7 +15,7 @@ from detectron2.utils.events import get_event_storage
 from detectron2.layers import ShapeSpec, cat
 
 from ...layers import Scale
-from ..non_local_head import TransformerNonLocal
+from ..non_local_head import TransformerNonLocal, Conv2dNonLocal
 from .fcosv2 import (
     get_num_gpus,
     get_sample_region,
@@ -55,9 +55,9 @@ class DeformableParts(nn.Module):
         self.backbone.num_channels = d2_backbone.num_channels
         backbone_shape = d2_backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
-        self.embedding = PartsEmbeddingSine()
+        self.embedding = PositionEmbeddingSine(N_steps, normalize=True)
         self.part_head = PartsHead(cfg, feature_shapes)
-        self.dense_head = TransformerNonLocal(cfg, d2_backbone.num_channels)
+        self.dense_head = Conv2dNonLocal(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
         self.loss_nominator = torch.tensor(1e-3)
         self.to(self.device)
@@ -149,7 +149,7 @@ class DeformableParts(nn.Module):
         gt_boxes = gt_boxes.view(-1, 4)
 
         foreground_idxs = (gt_classes >= 0) & (gt_classes != self.num_classes)
-        pos_inds = torch.nonzero(foreground_idxs).squeeze(1)
+        pos_inds = torch.nonzero(foreground_idxs, as_tuple=False).squeeze(1)
 
         num_gpus = get_num_gpus()
         total_num_pos = reduce_sum(pos_inds.new_tensor([pos_inds.numel()])).item()
@@ -177,7 +177,7 @@ class DeformableParts(nn.Module):
                 reduction="none") / strides[foreground_idxs]
             loss_box, loss_box_indices = loss_box.sort(dim=1)
             loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
-            loss_relations_w = F.sigmoid(loss_relations_w).unsqueeze(1)
+            loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
 
             loss_relation = smooth_l1_loss(
                 connected_boxes[foreground_idxs],
@@ -200,7 +200,7 @@ class DeformableParts(nn.Module):
 
         return {"loss_cls": loss_cls,
                 "loss_box": loss_box,
-                # "loss_relation": loss_relation,
+                "loss_relation": loss_relation,
                 "loss_confidence": pred_confidences.mean()}
 
     def preprocess_image(self, batched_inputs):
@@ -397,9 +397,7 @@ class PositionEmbeddingSine(nn.Module):
             scale = 2 * math.pi
         self.scale = scale
 
-    def forward(self, tensor_list: NestedTensor):
-        x = tensor_list.tensors
-        mask = tensor_list.mask
+    def forward(self, mask, logits, parts):
         assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
@@ -409,7 +407,7 @@ class PositionEmbeddingSine(nn.Module):
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=x.device)
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=parts.device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
 
         pos_x = x_embed[:, :, :, None] / dim_t
