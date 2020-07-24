@@ -328,7 +328,7 @@ class MaskedBackbone(nn.Module):
         assert len(feature_shapes) == len(self.feature_strides)
         for idx, shape in enumerate(feature_shapes):
             N, _, H, W = shape
-            masks_per_feature_level = torch.ones((N, int(np.floor(H/4)), int(np.floor(W/4))), dtype=torch.bool, device=device)
+            masks_per_feature_level = torch.ones((N, int(np.ceil(H/2)), int(np.ceil(W/2))), dtype=torch.bool, device=device)
             for img_idx, (h, w) in enumerate(image_sizes):
                 masks_per_feature_level[
                     img_idx,
