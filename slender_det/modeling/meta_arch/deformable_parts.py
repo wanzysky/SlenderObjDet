@@ -57,7 +57,7 @@ class DeformableParts(nn.Module):
         feature_shapes = [backbone_shape[f] for f in self.in_features]
         self.embedding = PartsEmbeddingSine(N_steps, normalize=True)
         self.part_head = PartsHead(cfg, feature_shapes)
-        self.dense_head = Conv2dNonLocal(cfg, d2_backbone.num_channels)
+        self.dense_head = TransformerNonLocal(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
         self.loss_nominator = torch.tensor(1e-3)
         self.to(self.device)
@@ -202,6 +202,8 @@ class DeformableParts(nn.Module):
                 gt_boxes[foreground_idxs],
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
+            loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
+            loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
             loss_box, loss_box_indices = loss_box.sort(dim=1)
 
             loss_relation = smooth_l1_loss(
@@ -210,13 +212,11 @@ class DeformableParts(nn.Module):
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
 
-            # loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
-            # loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
-            # get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
-            # loss_relation = loss_relations_w * loss_relation
+            get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
+            loss_relation = loss_relations_w * loss_relation
 
-            loss_box = loss_box[:, :-1].sum() +\
-                pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -1:]).sum() * 1e-3
+            loss_box = loss_box[:, :-2].sum() +\
+                pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -2:]).sum() * 1e-3
             loss_box = loss_box / num_pos_avg_per_gpu
 
             loss_relation = smooth_l1_loss(

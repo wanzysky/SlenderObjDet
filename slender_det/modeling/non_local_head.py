@@ -23,15 +23,9 @@ class TransformerNonLocal(nn.Module):
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         self.input_proj = nn.Sequential(
-            nn.MaxPool2d(kernel_size=(2, 2)),
+            nn.MaxPool2d((2, 2)),
             nn.Conv2d(hidden_dim, hidden_dim, kernel_size=2, stride=2, padding=0))
-        '''
-        self.upsample = nn.Sequential(
-                nn.ConvTranspose2d(in_channels, in_channels, 2, 2),
-                nn.BatchNorm2d(in_channels),
-                nn.ReLU(),
-                nn.ConvTranspose2d(in_channels, in_channels, 2, 2))
-        '''
+        self.pos_proj = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=2, stride=2, padding=0)
         self.transformer = Transformer(
             d_model=hidden_dim,
             dropout=dropout,
@@ -51,10 +45,10 @@ class TransformerNonLocal(nn.Module):
             n, c, h, w = src.shape
             query = self.input_proj(src)
             memory = self.transformer(
-                query, mask, self.query_embed.weight,
-                pos, encoder_only=True)
+                query, mask[:, 1::2, 1::2], self.query_embed.weight,
+                self.pos_proj(pos), encoder_only=True)
             memory = F.interpolate(memory, size=(h, w))
-            relation = self.non_local(memory)
+            relation = self.non_local(memory, True)
             relations.append(relation)
 
         return relations
