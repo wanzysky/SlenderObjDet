@@ -55,7 +55,7 @@ class DeformableParts(nn.Module):
         self.backbone.num_channels = d2_backbone.num_channels
         backbone_shape = d2_backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
-        self.embedding = PositionEmbeddingSine(N_steps, normalize=True)
+        self.embedding = PartsEmbeddingSine(N_steps, normalize=True)
         self.part_head = PartsHead(cfg, feature_shapes)
         self.dense_head = Conv2dNonLocal(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
@@ -91,7 +91,9 @@ class DeformableParts(nn.Module):
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
             gt_classes, gt_boxes = self.get_ground_truth(locations, gt_instances)
 
-            losses = self.losses(gt_classes, gt_boxes, part_scores, part_boxes, part_confidences, relation)
+            losses = self.losses(
+                gt_classes, gt_boxes, locations,
+                part_scores, part_boxes, part_confidences, relation)
             return losses
         else:
             results = self.inference(part_scores, part_boxes, relation)
@@ -99,8 +101,13 @@ class DeformableParts(nn.Module):
 
             return results
 
+    def delta2boxes(self, location, delta):
+        pass
 
-    def losses(self, gt_classes, gt_boxes, pred_scores, pred_boxes, pred_confidences, pred_relations):
+
+    def losses(
+        self, gt_classes, gt_boxes, locations,
+        pred_scores, pred_boxes, pred_confidences, pred_relations):
 
         def permute_and_concat(box_cls, box_reg, confidences, strides, num_classes=80):
             """
@@ -133,10 +140,30 @@ class DeformableParts(nn.Module):
             strides.append(
                 torch.zeros_like(pred) + self.fpn_strides[i] * 4)
             n, c, h, w = pred.shape
-            pred = pred.reshape(n, c, -1)
-            connected_box = torch.matmul(pred, pred_relations[i])
-            connected_box = F.interpolate(connected_box.view(n, c, h//2, w//2), size=(h, w), mode="nearest")
-            connected_box = torch.max(pred.view(n, c, h, w), connected_box)
+            init_pred = pred
+            pred = F.max_pool2d(pred, 2, 2, 0)
+            pred = pred.flatten(2)
+            location = locations[i].view(h, w, 2).unsqueeze(0)
+            location = location[:, 1::2, 1::2].reshape(1, -1, 2)
+            pred = torch.stack([
+                location[:, :, 0] - pred[:, 0],
+                location[:, :, 1] - pred[:, 1],
+                location[:, :, 0] + pred[:, 2],
+                location[:, :, 1] + pred[:, 3]], dim=1)
+
+            connected_box = torch.matmul(pred, pred_relations[i].permute(0, 2, 1))
+            # connected_box = F.interpolate(connected_box.view(n, c, h//2, w//2), size=(h, w), mode="nearest").flatten(2)
+            # connected_box = connected_box.flatten(2)
+            location = locations[i].unsqueeze(0)
+            connected_box = torch.stack([
+                location[:, :, 0] - connected_box[:, 0],
+                location[:, :, 1] - connected_box[:, 1],
+                connected_box[:, 2] - location[:, :, 0],
+                connected_box[:, 3] - location[:, :, 1]
+            ])
+            connected_box = torch.max(
+                init_pred.view(n, c, h, w),
+                connected_box.view(n, c, h, w))
 
             connected_boxes.append(permute_to_N_HW_K(connected_box, 4))
         connected_boxes = cat(connected_boxes, dim=1).view(-1, 4)
@@ -176,16 +203,17 @@ class DeformableParts(nn.Module):
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
             loss_box, loss_box_indices = loss_box.sort(dim=1)
-            loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
-            loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
 
             loss_relation = smooth_l1_loss(
                 connected_boxes[foreground_idxs],
                 gt_boxes[foreground_idxs],
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
-            get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
-            loss_relation = loss_relations_w * loss_relation
+
+            # loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
+            # loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
+            # get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
+            # loss_relation = loss_relations_w * loss_relation
 
             loss_box = loss_box[:, :-1].sum() +\
                 pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -1:]).sum() * 1e-3
@@ -328,7 +356,7 @@ class MaskedBackbone(nn.Module):
         assert len(feature_shapes) == len(self.feature_strides)
         for idx, shape in enumerate(feature_shapes):
             N, _, H, W = shape
-            masks_per_feature_level = torch.ones((N, int(np.ceil(H/2)), int(np.ceil(W/2))), dtype=torch.bool, device=device)
+            masks_per_feature_level = torch.ones((N, int(np.floor(H/2)), int(np.floor(W/2))), dtype=torch.bool, device=device)
             for img_idx, (h, w) in enumerate(image_sizes):
                 masks_per_feature_level[
                     img_idx,
@@ -435,27 +463,28 @@ class PartsEmbeddingSine(nn.Module):
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
         x_embed = not_mask.cumsum(2, dtype=torch.float32)
+        parts = F.max_pool2d(parts, 2, stride=2, padding=0)
+
         if self.normalize:
             eps = 1e-6
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
 
-        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=parts.device)
-        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+        num_pos_feats = self.num_pos_feats // 2
+        dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=parts.device)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / num_pos_feats)
 
         pos_x = x_embed[:, :, :, None] / dim_t
         pos_y = y_embed[:, :, :, None] / dim_t
         pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
         pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
-        pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
 
-
-        x_embed = F.interpolate(x_embed.unsqueeze(1), (h, w)).squeeze(1) * 4
-        y_embed = F.interpolate(y_embed.unsqueeze(1), (h, w)).squeeze(1) * 4
-        parts_embed = torch.stack([x_embed - parts[:, 0], y_embed - parts[:, 1],
-            x_embed + parts[:, 2], y_embed - parts[:, 3]], dim=1)
-        parts_embed = parts_embed / 64
-
-
+        num_pos_feats = num_pos_feats // 2
+        dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=parts.device)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / num_pos_feats)
+        pos_d = parts[:, :, :, :, None] / dim_t
+        pos_d = pos_d.permute((0, 2, 3, 1, 4))
+        pos_d = torch.stack((pos_d[:, :, :, :, 0::2].sin(), pos_d[:, :, :, :, 1::2].cos()), dim=5).flatten(3)
+        pos = torch.cat((pos_y, pos_x, pos_d), dim=3).permute(0, 3, 1, 2)
 
         return pos

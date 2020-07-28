@@ -80,9 +80,10 @@ class Conv2dNonLocal(nn.Module):
         super(Conv2dNonLocal, self).__init__()
         hidden_dim = cfg.MODEL.DPM.HIDDEN_DIM
 
-        self.conv = nn.Conv2d(
-            in_channels, hidden_dim,
-            kernel_size=3, padding=1, stride=2)
+        self.conv = nn.Sequential(
+            nn.Conv2d(
+                in_channels, hidden_dim,
+                kernel_size=2, padding=0, stride=2))
         self.non_local = NonLocalBlock2D(hidden_dim+in_channels, hidden_dim)
 
     def forward(self, features, masks, poses):
@@ -93,7 +94,7 @@ class Conv2dNonLocal(nn.Module):
             memory = self.conv(src)
             memory = cat([memory, pos], dim=1)
             memory = F.interpolate(memory, size=(h, w))
-            relation = self.non_local(memory)
+            relation = self.non_local(memory, True)
             relations.append(relation)
 
         return relations
@@ -162,7 +163,7 @@ class NonLocalBlock2D(nn.Module):
             self.g = nn.Sequential(self.g, max_pool_layer)
             self.phi = nn.Sequential(self.phi, max_pool_layer)
 
-    def forward(self, x):
+    def forward(self, x, attention_only=False):
         '''
         :param x: (b, c, t, h, w)
         :return:
@@ -170,16 +171,16 @@ class NonLocalBlock2D(nn.Module):
 
         batch_size = x.size(0)
 
-        g_x = self.g(x).view(batch_size, self.inter_channels, -1)
-        g_x = g_x.permute(0, 2, 1)
-
         theta_x = self.theta(x).view(batch_size, self.inter_channels, -1)
         theta_x = theta_x.permute(0, 2, 1)
         phi_x = self.phi(x).view(batch_size, self.inter_channels, -1)
         f = torch.matmul(theta_x, phi_x)
         f_div_C = F.softmax(f, dim=-1)
-        return f_div_C
+        if attention_only:
+            return f_div_C
 
+        g_x = self.g(x).view(batch_size, self.inter_channels, -1)
+        g_x = g_x.permute(0, 2, 1)
 
         y = torch.matmul(f_div_C, g_x)
         y = y.permute(0, 2, 1).contiguous()
