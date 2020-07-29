@@ -12,10 +12,13 @@ from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.modeling.backbone import build_backbone
 from detectron2.structures import Boxes, ImageList, Instances
 from detectron2.utils.events import get_event_storage
+from detectron2.utils.logger import log_every_n
 from detectron2.layers import ShapeSpec, cat
 
-from ...layers import Scale
-from ..non_local_head import TransformerNonLocal, Conv2dNonLocal
+from concern.box_ops import box_xyxy_to_cxcywh
+from ...layers import Scale, sigmoid_focal_loss
+from ..set_head import TransformerSetHead
+from ..set_criterion import SetCriterion
 from .fcosv2 import (
     get_num_gpus,
     get_sample_region,
@@ -24,6 +27,7 @@ from .fcosv2 import (
     permute_to_N_HW_K,
     reduce_sum
 )
+from ..matchers import HungarianMatcher
 
 
 INF = float("inf")
@@ -45,21 +49,36 @@ class DeformableParts(nn.Module):
         self.norm_reg_targets       = cfg.MODEL.DPM.NORM_REG_TARGETS
         # fmt: on
 
+        # Loss parameters:
+        giou_weight = cfg.MODEL.DPM.GIOU_WEIGHT
+        l1_weight = cfg.MODEL.DPM.L1_WEIGHT
+        deep_supervision = cfg.MODEL.DPM.DEEP_SUPERVISION
+        no_object_weight = cfg.MODEL.DPM.NO_OBJECT_WEIGHT
+
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
 
         hidden_dim = cfg.MODEL.DPM.HIDDEN_DIM
-        N_steps = hidden_dim // 2
         d2_backbone = MaskedBackbone(cfg)
         self.backbone = d2_backbone
         self.backbone.num_channels = d2_backbone.num_channels
         backbone_shape = d2_backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
-        self.embedding = PartsEmbeddingSine(N_steps, normalize=True)
+        self.embedding = PartsEmbeddingSine(hidden_dim, normalize=True)
         self.part_head = PartsHead(cfg, feature_shapes)
-        self.dense_head = TransformerNonLocal(cfg, d2_backbone.num_channels)
+
+        self.dense_head = TransformerSetHead(cfg, d2_backbone.num_channels)
         self.size_divisibility = d2_backbone.backbone.size_divisibility
-        self.loss_nominator = torch.tensor(1e-3)
+
+        self.loss_scale = torch.tensor(1e-3)
+        matcher = HungarianMatcher(cost_class=1, cost_bbox=l1_weight, cost_giou=giou_weight)
+        losses = ["labels", "boxes", "cardinality"]
+        weight_dict = {"loss_ce": 1, "loss_bbox": l1_weight}
+        weight_dict["loss_giou"] = giou_weight
+        self.criterion = SetCriterion(
+            self.num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=no_object_weight, losses=losses
+        )
+        self.criterion.to(self.device)
         self.to(self.device)
 
     @property
@@ -77,39 +96,106 @@ class DeformableParts(nn.Module):
         features = [nested_features[f].tensors for f in self.in_features]
         masks = [nested_features[f].mask for f in self.in_features]
 
-        part_scores, part_boxes, part_confidences = self.part_head(features)
-
-        pos = [self.embedding(m, s, b)
-               for m, s, b in zip(masks, part_scores, part_boxes)]
-        relation = self.dense_head(features, masks, pos)
+        part_scores, part_boxes = self.part_head(features)
 
         shapes = [feature.shape[-2:] for feature in features]
         locations = compute_locations(shapes, self.fpn_strides, self.device)
+        obs_parts = []
+        for part, location in zip(part_boxes, locations):
+            n, c, h, w = part.shape
+            part = part.flatten(2)
+            location = location.unsqueeze(0)
+            obs_parts.append(
+                torch.stack([
+                    location[:, :, 0] - part[:, 0],
+                    location[:, :, 1] - part[:, 1],
+                    location[:, :, 0] + part[:, 2],
+                    location[:, :, 1] + part[:, 3],
+                    ], dim=1).view(n, c, h, w))
 
+        pos = [self.embedding(m, s.detach(), b.detach())
+               for m, s, b in zip(masks, part_scores, obs_parts)]
+        pos_indices = [self.select_positives(s) for s in part_scores]
+
+        selected_features = cat([
+            f.flatten(2).gather(2, i[:, None].repeat(1, f.shape[1], 1))
+            for i, f in zip(pos_indices, features)],
+            -1)
+        selected_poses = cat([
+            f.flatten(2).gather(2, i[:, None].repeat(1, f.shape[1], 1))
+            for i, f in zip(pos_indices, pos)],
+            -1)
+        selected_masks = cat([
+            f.flatten(1).gather(1, i)
+            for i, f in zip(pos_indices, masks)],
+            -1)
+
+        set_pred = self.dense_head(
+            selected_features,
+            selected_masks,
+            selected_poses)
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
             gt_classes, gt_boxes = self.get_ground_truth(locations, gt_instances)
 
-            losses = self.losses(
+            init_losses = self.losses(
                 gt_classes, gt_boxes, locations,
-                part_scores, part_boxes, part_confidences, relation)
-            return losses
+                part_scores, part_boxes)
+
+            targets = self.prepare_targets(gt_instances)
+            loss_dict = self.criterion(set_pred, targets)
+            weight_dict = self.criterion.weight_dict
+            momentum = 1e-5
+            self.loss_scale = self.loss_scale * (1 - momentum) + 1 * momentum
+            for k in list(loss_dict.keys()):
+                if k in weight_dict:
+                    loss_dict[k] *= weight_dict[k]
+                loss_dict[k] *= self.loss_scale
+                if "error" in k:
+                    get_event_storage().put_scalar(k, loss_dict.pop(k))
+
+            loss_dict.update(init_losses)
+            return loss_dict
         else:
             results = self.inference(part_scores, part_boxes, relation)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
 
-    def delta2boxes(self, location, delta):
-        pass
+    def prepare_targets(self, targets):
+        new_targets = []
+        for targets_per_image in targets:
+            h, w = targets_per_image.image_size
+            image_size_xyxy = torch.as_tensor([w, h, w, h], dtype=torch.float, device=self.device)
+            gt_classes = targets_per_image.gt_classes
+            gt_boxes = targets_per_image.gt_boxes.tensor / image_size_xyxy
+            gt_boxes = box_xyxy_to_cxcywh(gt_boxes)
+            new_targets.append({"labels": gt_classes, "boxes": gt_boxes})
+        return new_targets
 
+
+    def select_positives(self, scores, positives=512):
+        # Declude background
+        scores = scores[:, :-1]
+
+        # Pooling and un-pooling for the balance between small and large objects.
+        scores, indices = F.max_pool2d(
+            scores,
+            kernel_size=2, padding=0, stride=2,
+            return_indices=True)
+        scores = F.max_unpool2d(scores, indices, kernel_size=2, padding=0, stride=2)
+        n, c, h, w = scores.shape
+        scores, _ = scores.flatten(2).max(1)
+        scores, sorted_indices = scores.sort(1)
+        sorted_indices = sorted_indices[:, :positives]
+        return sorted_indices
 
     def losses(
-        self, gt_classes, gt_boxes, locations,
-        pred_scores, pred_boxes, pred_confidences, pred_relations):
+            self, gt_classes, gt_boxes, locations,
+            pred_scores, pred_boxes):
 
-        def permute_and_concat(box_cls, box_reg, confidences, strides, num_classes=80):
+        def permute_and_concat(box_cls, box_reg, strides, num_classes=80):
             """
             Rearrange the tensor layout from the network output, i.e.:
             list[Tensor]: #lvl tensors of shape (N, A x K, Hi, Wi)
@@ -122,55 +208,23 @@ class DeformableParts(nn.Module):
             # for the objectness, the box_reg and the center-ness
             box_cls_flattened = [permute_to_N_HW_K(x, num_classes) for x in box_cls]
             box_reg_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg]
-            confidence_flattened = [permute_to_N_HW_K(x, 4) for x in confidences]
             strides_flattened = [permute_to_N_HW_K(x, 4) for x in strides]
             # concatenate on the first dimension (representing the feature levels), to
             # take into account the way the labels were generated (with all feature maps
             # being concatenated as well)
             box_cls = cat(box_cls_flattened, dim=1).view(-1, num_classes)
             box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
-            confidences = cat(confidence_flattened, dim=1).view(-1, 4)
             strides = cat(strides_flattened, dim=1).view(-1, 4)
 
-            return box_cls, box_reg, confidences, strides
+            return box_cls, box_reg, strides
 
         strides = []
-        connected_boxes = []
         for i, pred in enumerate(pred_boxes):
             strides.append(
                 torch.zeros_like(pred) + self.fpn_strides[i] * 4)
-            n, c, h, w = pred.shape
-            init_pred = pred
-            pred = F.max_pool2d(pred, 2, 2, 0)
-            pred = pred.flatten(2)
-            location = locations[i].view(h, w, 2).unsqueeze(0)
-            location = location[:, 1::2, 1::2].reshape(1, -1, 2)
-            pred = torch.stack([
-                location[:, :, 0] - pred[:, 0],
-                location[:, :, 1] - pred[:, 1],
-                location[:, :, 0] + pred[:, 2],
-                location[:, :, 1] + pred[:, 3]], dim=1)
 
-            connected_box = torch.matmul(pred, pred_relations[i].permute(0, 2, 1))
-            # connected_box = F.interpolate(connected_box.view(n, c, h//2, w//2), size=(h, w), mode="nearest").flatten(2)
-            # connected_box = connected_box.flatten(2)
-            location = locations[i].unsqueeze(0)
-            connected_box = torch.stack([
-                location[:, :, 0] - connected_box[:, 0],
-                location[:, :, 1] - connected_box[:, 1],
-                connected_box[:, 2] - location[:, :, 0],
-                connected_box[:, 3] - location[:, :, 1]
-            ])
-            connected_box = torch.max(
-                init_pred.view(n, c, h, w),
-                connected_box.view(n, c, h, w))
-
-            connected_boxes.append(permute_to_N_HW_K(connected_box, 4))
-        connected_boxes = cat(connected_boxes, dim=1).view(-1, 4)
-
-        pred_scores, pred_boxes, pred_confidences, strides =\
-            permute_and_concat(pred_scores, pred_boxes, pred_confidences, strides)
-        pred_confidences = 1 - (pred_confidences - pred_confidences)
+        pred_scores, pred_boxes, strides =\
+            permute_and_concat(pred_scores, pred_boxes, strides)
 
         gt_classes = gt_classes.flatten()
         gt_boxes = gt_boxes.view(-1, 4)
@@ -195,41 +249,20 @@ class DeformableParts(nn.Module):
         if pos_inds.numel() == 0:
             loss_box = pred_boxes[foreground_idxs].sum()
             reduce_sum(pred_boxes[foreground_idxs].new_tensor([0.0]))
-            loss_relation = connected_boxes[foreground_idxs].sum()
         else:
             loss_box = smooth_l1_loss(
                 pred_boxes[foreground_idxs],
                 gt_boxes[foreground_idxs],
                 beta=self.smooth_l1_loss_beta,
                 reduction="none") / strides[foreground_idxs]
-            loss_relations_w = (self.loss_nominator / torch.clamp(loss_box.detach().min(dim=1)[0], min=1e-6))
-            loss_relations_w = torch.sigmoid(loss_relations_w).unsqueeze(1)
             loss_box, loss_box_indices = loss_box.sort(dim=1)
-
-            loss_relation = smooth_l1_loss(
-                connected_boxes[foreground_idxs],
-                gt_boxes[foreground_idxs],
-                beta=self.smooth_l1_loss_beta,
-                reduction="none") / strides[foreground_idxs]
-
-            get_event_storage().put_scalar("relation_weights", loss_relations_w.mean())
-            loss_relation = loss_relations_w * loss_relation
 
             loss_box = loss_box[:, :-2].sum() +\
                 pred_boxes[foreground_idxs].gather(1, loss_box_indices[:, -2:]).sum() * 1e-3
             loss_box = loss_box / num_pos_avg_per_gpu
 
-            loss_relation = smooth_l1_loss(
-                connected_boxes[foreground_idxs],
-                gt_boxes[foreground_idxs],
-                beta=self.smooth_l1_loss_beta,
-                reduction="none") / strides[foreground_idxs]
-            loss_relation = loss_relation.sum() / num_pos_avg_per_gpu * 0.5
-
-        return {"loss_cls": loss_cls,
-                "loss_box": loss_box,
-                "loss_relation": loss_relation,
-                "loss_confidence": pred_confidences.mean()}
+        return {"loss_cls": loss_cls * 10,
+                "loss_box": loss_box * 10}
 
     def preprocess_image(self, batched_inputs):
         """
@@ -294,7 +327,6 @@ class PartsHead(nn.Module):
 
         self.logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
         self.boxes = nn.Conv2d(in_channels, 4, kernel_size=3, padding=1, stride=1)
-        self.confidences = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
         self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
 
         self.add_module("cls_head", nn.Sequential(*cls_head))
@@ -302,7 +334,7 @@ class PartsHead(nn.Module):
 
         # initialization
         for modules in [self.cls_head, self.box_head,
-                        self.logits, self.boxes, self.confidences]:
+                        self.logits, self.boxes]:
             for l in modules.modules():
                 if isinstance(l, nn.Conv2d):
                     torch.nn.init.normal_(l.weight, std=0.01)
@@ -318,15 +350,13 @@ class PartsHead(nn.Module):
     def forward(self, x):
         logits = []
         boxes = []
-        confidences = []
 
         for l, feature in enumerate(x):
             logits.append(self.logits(self.cls_head(feature)))
             box_feature = self.box_head(feature)
             box_pred = self.scales[l](self.boxes(box_feature))
             boxes.append(torch.exp(self.scales[l](box_pred)))
-            confidences.append(self.confidences(box_feature))
-        return logits, boxes, confidences
+        return logits, boxes
 
 
 class MaskedBackbone(nn.Module):
@@ -356,7 +386,7 @@ class MaskedBackbone(nn.Module):
         assert len(feature_shapes) == len(self.feature_strides)
         for idx, shape in enumerate(feature_shapes):
             N, _, H, W = shape
-            masks_per_feature_level = torch.ones((N, int(np.floor(H/2)), int(np.floor(W/2))), dtype=torch.bool, device=device)
+            masks_per_feature_level = torch.ones((N, H, W), dtype=torch.bool, device=device)
             for img_idx, (h, w) in enumerate(image_sizes):
                 masks_per_feature_level[
                     img_idx,
@@ -447,7 +477,7 @@ class PositionEmbeddingSine(nn.Module):
 
 
 class PartsEmbeddingSine(nn.Module):
-    def __init__(self, num_pos_feats=64, temperature=10000, normalize=False, scale=None):
+    def __init__(self, num_pos_feats=64, temperature=10000, normalize=False, scale=None, num_classes=80):
         super().__init__()
         self.num_pos_feats = num_pos_feats
         self.temperature = temperature
@@ -457,20 +487,22 @@ class PartsEmbeddingSine(nn.Module):
         if scale is None:
             scale = 2 * math.pi
         self.scale = scale
+        self.class_proj = nn.Conv2d(
+            num_classes, self.num_pos_feats // 4,
+            kernel_size=1, padding=0)
 
     def forward(self, mask, logits, parts):
         assert mask is not None
         not_mask = ~mask
         y_embed = not_mask.cumsum(1, dtype=torch.float32)
         x_embed = not_mask.cumsum(2, dtype=torch.float32)
-        parts = F.max_pool2d(parts, 2, stride=2, padding=0)
 
         if self.normalize:
             eps = 1e-6
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
 
-        num_pos_feats = self.num_pos_feats // 2
+        num_pos_feats = self.num_pos_feats // 4
         dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=parts.device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / num_pos_feats)
 
@@ -479,12 +511,15 @@ class PartsEmbeddingSine(nn.Module):
         pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
         pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
 
-        num_pos_feats = num_pos_feats // 2
+        pos_c = self.class_proj(torch.sigmoid(logits)).permute(0, 2, 3, 1)
+
+        num_pos_feats = num_pos_feats // 4
         dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=parts.device)
         dim_t = self.temperature ** (2 * (dim_t // 2) / num_pos_feats)
         pos_d = parts[:, :, :, :, None] / dim_t
         pos_d = pos_d.permute((0, 2, 3, 1, 4))
         pos_d = torch.stack((pos_d[:, :, :, :, 0::2].sin(), pos_d[:, :, :, :, 1::2].cos()), dim=5).flatten(3)
-        pos = torch.cat((pos_y, pos_x, pos_d), dim=3).permute(0, 3, 1, 2)
+        pos = torch.cat(
+            (pos_y, pos_x, pos_c, pos_d), dim=3).permute(0, 3, 1, 2)
 
         return pos

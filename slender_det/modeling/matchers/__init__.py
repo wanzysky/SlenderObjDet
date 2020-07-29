@@ -1,6 +1,7 @@
 from .rep_matcher import rep_points_match, nearest_point_match, inside_match
 from detectron2.modeling.matcher import Matcher
 from .topk_matcher import TopKMatcher
+from .hungarian_matcher import HungarianMatcher
 
 MATCHER_TYPES = ["Origin", "TopK"]
 

@@ -19,6 +19,7 @@ You may want to write your own script with your datasets and other customization
 import logging
 import os
 from collections import OrderedDict
+import time
 import torch
 
 import detectron2.utils.comm as comm
@@ -52,6 +53,47 @@ class Trainer(DefaultTrainer):
     "SimpleTrainer", or write your own training loop. You can use
     "tools/plain_train_net.py" as an example.
     """
+
+    def run_step(self):
+        """
+        Implement the standard training logic described above.
+        """
+        assert self.model.training, "[SimpleTrainer] model was changed to eval mode!"
+        start = time.perf_counter()
+        """
+        If you want to do something with the data, you can wrap the dataloader.
+        """
+        data = next(self._data_loader_iter)
+        data_time = time.perf_counter() - start
+
+        """
+        If you want to do something with the losses, you can wrap the model.
+        """
+        loss_dict_or_tuple = self.model(data)
+        if isinstance(loss_dict_or_tuple, tuple):
+            loss_dict, metrics_dict = loss_dict_or_tuple
+        else:
+            metrics_dict = loss_dict
+
+        losses = sum(loss_dict.values())
+        self._detect_anomaly(losses, loss_dict)
+
+        metrics_dict["data_time"] = data_time
+        self._write_metrics(metrics_dict)
+
+        """
+        If you need to accumulate gradients or do something similar, you can
+        wrap the optimizer with your custom `zero_grad()` method.
+        """
+        self.optimizer.zero_grad()
+        losses.backward()
+
+        """
+        If you need gradient clipping/scaling or other processing, you can
+        wrap the optimizer with your custom `step()` method.
+        """
+        self.optimizer.step()
+
 
     @classmethod
     def build_train_loader(cls, cfg):

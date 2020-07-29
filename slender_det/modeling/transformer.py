@@ -44,23 +44,19 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed, encoder_only=False):
+    def forward(self, src, mask, query_embed, pos_embed):
+        bs = src.shape[0]
         # flatten NxCxHxW to HWxNxC
-        bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        src = src.permute(2, 0, 1)
+        pos_embed = pos_embed.permute(2, 0, 1)
         query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        mask = mask.flatten(1)
 
         tgt = torch.zeros_like(query_embed)
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
-        if encoder_only:
-            return memory.view(h, w, bs, c).permute(2, 3, 0, 1)
-
         hs = self.decoder(tgt, memory, memory_key_padding_mask=mask,
                           pos=pos_embed, query_pos=query_embed)
 
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        return hs.transpose(1, 2)
 
 
 class TransformerEncoder(nn.Module):
@@ -271,6 +267,21 @@ class TransformerDecoderLayer(nn.Module):
                                     tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
         return self.forward_post(tgt, memory, tgt_mask, memory_mask,
                                  tgt_key_padding_mask, memory_key_padding_mask, pos, query_pos)
+
+class MLP(nn.Module):
+    """ Very simple multi-layer perceptron (also called FFN)"""
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super().__init__()
+        self.num_layers = num_layers
+        h = [hidden_dim] * (num_layers - 1)
+        self.layers = nn.ModuleList(
+            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+
+    def forward(self, x):
+        for i, layer in enumerate(self.layers):
+            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+        return x
+
 
 
 def _get_clones(module, N):
