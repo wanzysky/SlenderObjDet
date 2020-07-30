@@ -155,6 +155,7 @@ class DeformableParts(nn.Module):
                     loss_dict[k] *= self.loss_scale
 
             loss_dict.update(init_losses)
+            metrics.update(init_losses)
             return loss_dict, metrics
         else:
             results = self.inference(part_scores, part_boxes, relation)

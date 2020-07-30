@@ -44,7 +44,7 @@ class TransformerSetHead(nn.Module):
         outputs_class = self.class_embed(hs)
         outputs_coord = self.bbox_embed(hs).sigmoid()
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
-        out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
+        # out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         return out
 
     @torch.jit.unused
