@@ -320,6 +320,7 @@ class ReppointsRetinaNet(nn.Module):
                 bboxes: List[[N,4,H,W]]
         '''
         bboxes = []
+        use_2points = True
         # For each level
         for i in range(len(deltas)):
             """
@@ -327,12 +328,15 @@ class ReppointsRetinaNet(nn.Module):
             C=4 or 18 
             """
             delta = deltas[i]
+            if use_2points:
+                delta = delta[:,:4,:,:]
             N, C, H_i, W_i = delta.shape
             # (1, 2, H_i, W_i), grid for this feature level.
             base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
+            
 
             # (N*C/2, 2, H_i, W_i)
-            delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+            delta = delta.view(-1, C//2, 2, H_i, W_i).reshape(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
             points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
@@ -658,10 +662,12 @@ class ReppointsRetinaNetHead(nn.Module):
         logits = []
         offsets_refine = []
         offsets_init_9points = [] # only used in dcn_offset generation
-        for i in range(len(cls_features)):
-            if self.num_points == 2:
+        if self.num_points == 2:
+            for i in range(len(cls_features)):
                 offsets_init_9points_i = self.gen_grid_from_reg(offsets_init[i])
                 offsets_init_9points.append(offsets_init_9points_i)
+        else:
+            offsets_init_9points = offsets_init
         for i in range(len(cls_features)):
             pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init_9points[i].detach()\
                 + self.gradient_mul * offsets_init_9points[i]

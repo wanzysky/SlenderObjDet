@@ -12,14 +12,34 @@ from concern.support import make_dual
 from concern import webcv2
 
 import torch
+import math
+
 @lru_cache()
-def standard_linear(resolution=128, reverse=False):
+def standard_linear(resolution=128, reverse=False, sigma=0):
     grid = (np.mgrid[0:resolution, 0:resolution] / resolution).astype(np.float32).sum(0)
     if reverse:
         return (grid < 1) * (1 - grid)
     return (grid < 1) * grid
 
+@lru_cache()
+def standard_gaussian(resolution=128, reverse=False, sigma=0.5):
+    grid = (np.mgrid[0:resolution, 0:resolution] / resolution).astype(np.float32).sum(0)
+    if reverse:
+        grid = normal_distribution(grid, 0, sigma)
+        grid = (grid >= grid[-1,0]) * grid
+        norm_grid = grid / grid[0,0]
+    else:
+        grid = (grid < 1) * grid
+        grid = normal_distribution(grid, 1, sigma)
+        grid = (grid > grid[0,0]) * grid
+        norm_grid = grid / grid[-1,0]
+    return norm_grid
+    
 
+def normal_distribution(x, mean, sigma):
+    return np.exp(-1*((x-mean)**2)/(2*(sigma**2)))/(math.sqrt(2*np.pi) * sigma)
+    
+    
 def coordinate_transform(standard: np.ndarray, p_o, p_x, p_y, out_shape):
     h, w = standard.shape[:2]
     source_points = np.array([[0, 0], [0, h], [w, 0]], dtype=np.float32)
@@ -35,12 +55,20 @@ def mask_in_triangle(
     point_o,
     mask,
     reverse=False,
-):
+    standard = "linear",
+    sigma = 0.5
+):  
+    assert standard in ["linear","gaussian"], "standard must be linear or gaussian"
+    if standard == "linear":
+        standard = standard_linear
+    else:
+        standard = standard_gaussian
     point_x = hull[0]
     for next_i in range(1, hull.shape[0]):
         point_y = hull[next_i]
         local = coordinate_transform(
-            standard_linear(reverse=reverse),
+            #standard_linear(reverse=reverse),
+            standard(reverse=reverse,sigma=sigma),
             point_o, point_x, point_y,
             (width, height))
         mask = np.maximum(mask, local)
@@ -48,7 +76,8 @@ def mask_in_triangle(
 
     point_y = hull[0]
     local = coordinate_transform(
-        standard_linear(reverse=reverse),
+        #standard_linear(reverse=reverse),
+        standard(reverse=reverse,sigma=sigma),
         point_o, point_x, point_y,
         (width, height))
     mask = np.maximum(mask, np.clip(local, 0, 1))
@@ -197,6 +226,61 @@ class BorderMasks(PolygonMasks):
                 raise ValueError("Unsupported tensor dtype={} for indexing!".format(item.dtype))
             selected_polygons = [self.polygons[i] for i in item]
         return BorderMasks(selected_polygons)
+     
+    def center_masks(self, mask_size, standard, sigma=0.5):
+        center_mask = np.zeros(mask_size, dtype=np.float32)
+        expansion_ratio = 0.1
+        for polygons_per_instance in self.polygons:
+            polygon_points = np.concatenate(polygons_per_instance, axis=0).reshape(-1, 2)
+            # 1. Convet polygon to convex hull.
+            hull = cv2.convexHull(polygon_points.astype(np.float32), clockwise=False)
+            # (N, 1, 2)
+            if hull.shape[0] < 3:
+                continue
+
+            hull = hull.reshape(-1, 2)
+
+            try:
+                dilated_hull = dilate_polygon(hull, np.sqrt(polygon_area(hull[:, 0], hull[:, 1])) * expansion_ratio)
+            except IndexError:
+                continue
+            instance_width = int(dilated_hull[:, 0].max() - dilated_hull[:, 0].min() + 1 - 1e-5)
+            instance_height = int(dilated_hull[:, 1].max() - dilated_hull[:, 1].min() + 1 - 1e-5)
+            center_mask_for_instance = np.zeros((instance_height, instance_width), dtype=np.float32)
+
+            # Perform rendering on cropped areas to save computation cost.
+            shift = dilated_hull.min(0)
+            polygon_points = polygon_points - shift
+            hull = hull - shift
+            dilated_hull = dilated_hull - shift
+            point_o = hull.mean(axis=0)
+
+            center_mask_for_instance = mask_in_triangle(
+                hull,
+                instance_width,
+                instance_height,
+                point_o,
+                center_mask_for_instance,
+                reverse=True,
+                standard = standard,
+                sigma = sigma)
+            # 4. Attach to the mask for whole image
+            xmin, ymin = shift
+            xmax = xmin + instance_width
+            ymax = ymin + instance_height
+            xmin_valid = min(max(0, xmin), center_mask.shape[1] - 1)
+            xmax_valid = min(max(0, xmax), center_mask.shape[1] - 1)
+            ymin_valid = min(max(0, ymin), center_mask.shape[0] - 1)
+            ymax_valid = min(max(0, ymax), center_mask.shape[0] - 1)
+
+            center_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid] = np.fmax(
+                center_mask_for_instance[
+                    ymin_valid-ymin:ymax_valid-ymax+instance_height,
+                    xmin_valid-xmin:xmax_valid-xmax+instance_width],
+                center_mask[ymin_valid:ymax_valid, xmin_valid:xmax_valid])
+
+        return center_mask
+        
         
     def masks(
         self,

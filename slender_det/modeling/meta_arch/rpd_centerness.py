@@ -12,9 +12,11 @@ import numpy as np
 from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from torch import nn
 
+import torch.nn.functional as F
+
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY, RetinaNet
 from detectron2.modeling.backbone import build_backbone
-from detectron2.layers import DeformConv, cat, batched_nms
+from detectron2.layers import DeformConv, cat, batched_nms, ModulatedDeformConv
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.modeling.matcher import Matcher
 from detectron2.utils.events import get_event_storage
@@ -23,6 +25,10 @@ from detectron2.modeling.postprocessing import detector_postprocess
 
 import concern.webcv2 as webcv2
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
+from ...layers import Scale, iou_loss, DFConv2d, box_iou_loss
+
+
+INF = 100000000
 
 
 def flat_and_concate_levels(tensor_list: List[torch.Tensor]):
@@ -43,12 +49,92 @@ def flat_and_concate_levels(tensor_list: List[torch.Tensor]):
     return torch.cat(tensor_list, dim=1)
 
 
+def compute_centerness_targets(reg_targets):
+    left_right = reg_targets[:, [0, 2]]
+    top_bottom = reg_targets[:, [1, 3]]
+    centerness = (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * \
+                 (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+    return torch.sqrt(centerness)
+    
+    
+def compute_targets_for_locations(
+        locations, targets, object_sizes_of_interest,
+        strides, center_sampling_radius, num_classes, norm_reg_targets=False
+):
+    num_points = [len(_) for _ in locations]
+    # build normalization weights before cat locations
+    norm_weights = None
+    if norm_reg_targets:
+        norm_weights = torch.cat([torch.empty(n).fill_(s) for n, s in zip(num_points, strides)])
+
+    locations = torch.cat(locations, dim=0)
+    xs, ys = locations[:, 0], locations[:, 1]
+
+    gt_classes = []
+    reg_targets = []
+    ltrb_offsets = []
+    for im_i in range(len(targets)):
+        targets_per_im = targets[im_i]
+        bboxes = targets_per_im.gt_boxes.tensor
+        gt_classes_per_im = targets_per_im.gt_classes
+        area = targets_per_im.gt_boxes.area()
+
+        l = xs[:, None] - bboxes[:, 0][None]
+        t = ys[:, None] - bboxes[:, 1][None]
+        r = bboxes[:, 2][None] - xs[:, None]
+        b = bboxes[:, 3][None] - ys[:, None]
+        reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
+
+        if center_sampling_radius > 0:
+            is_in_boxes = get_sample_region(bboxes, strides, num_points, xs, ys, radius=center_sampling_radius)
+        else:
+            # no center sampling, it will use all the locations within a ground-truth box
+            is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+
+        max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
+        # limit the regression range for each location
+        is_cared_in_the_level = \
+            (max_reg_targets_per_im >= object_sizes_of_interest[:, [0]]) & \
+            (max_reg_targets_per_im <= object_sizes_of_interest[:, [1]])
+
+        locations_to_gt_area = area[None].repeat(len(locations), 1)
+        locations_to_gt_area[is_in_boxes == 0] = INF
+        locations_to_gt_area[is_cared_in_the_level == 0] = INF
+
+        # if there are still more than one objects for a location,
+        # we choose the one with minimal area
+        locations_to_min_area, locations_to_gt_inds = locations_to_gt_area.min(dim=1)
+
+        gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
+        # NOTE: set background labels to NUM_CLASSES not 0
+        gt_classes_per_im[locations_to_min_area == INF] = num_classes
+        
+        gt_boxes_per_im = bboxes.repeat(len(locations),1,1)
+        
+        # calculate regression targets in box type
+        gt_boxes_per_im = gt_boxes_per_im[range(len(locations)), locations_to_gt_inds]
+        ltrb_offsets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+#        if norm_reg_targets and norm_weights is not None:
+#            reg_targets_per_im /= norm_weights[:, None]
+
+        gt_classes.append(gt_classes_per_im)
+        reg_targets.append(gt_boxes_per_im)
+        ltrb_offsets.append(ltrb_offsets_per_im)
+    return torch.stack(gt_classes), torch.stack(reg_targets), torch.stack(ltrb_offsets)
+
 @META_ARCH_REGISTRY.register()
-class RepPointsDetector(nn.Module):
+class RepPointsCenterness(nn.Module):
     def __init__(self, cfg):
         super().__init__()
 
         # Configurations in common with RetinaNet are inherited.
+        
+        #fcos configs
+        self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES
+        self.center_sampling_radius = cfg.MODEL.FCOS.CENTER_SAMPLING_RADIUS
+        self.norm_reg_targets = cfg.MODEL.FCOS.NORM_REG_TARGETS
+        self.iou_loss_type = cfg.MODEL.FCOS.IOU_LOSS_TYPE
+        self.use_dcn_v2 = cfg.MODEL.FCOS.USE_DCN_V2
         # fmt: off
         self.num_classes = cfg.MODEL.RETINANET.NUM_CLASSES
         self.in_features = cfg.MODEL.RETINANET.IN_FEATURES
@@ -75,7 +161,7 @@ class RepPointsDetector(nn.Module):
         self.loss_bbox_refine = dict(type='SmoothL1Loss', beta=0.11, loss_weight=1.0),
         self.use_grid_points = False
         self.center_init = True
-        self.vis_period = 0
+        self.vis_period = 1024
 
         self.backbone = build_backbone(cfg)
         self.transform_method = "minmax"
@@ -148,23 +234,32 @@ class RepPointsDetector(nn.Module):
         self.reg_conv = nn.Sequential(
             *self.stacked_convs())
 
-        self.deform_cls_conv = DeformConv(
+        if self.use_dcn_v2:
+            deform_block = ModulatedDeformConv
+        else:
+            deform_block = DeformConv
+        self.deform_cls_conv = deform_block(
             self.point_feat_channels,
             self.point_feat_channels,
             self.dcn_kernel, 1, self.dcn_pad)
-        self.deform_reg_conv = DeformConv(
+        self.deform_reg_conv = deform_block(
             self.point_feat_channels,
             self.point_feat_channels,
             self.dcn_kernel, 1, self.dcn_pad)
 
         points_out_dim = 4 if self.use_grid_points else 2 * self.num_points
+        if self.use_dcn_v2:
+            init_points_out_dim = points_out_dim + self.num_points
+        else:
+            init_points_out_dim = points_out_dim
+            
         self.offsets_init = nn.Sequential(
             nn.Conv2d(self.point_feat_channels,
                       self.point_feat_channels,
                       3, 1, 1),
             nn.ReLU(inplace=True),
             nn.Conv2d(self.point_feat_channels,
-                      points_out_dim,
+                      init_points_out_dim,
                       1, 1, 0))
 
         self.offsets_refine = nn.Sequential(
@@ -177,7 +272,9 @@ class RepPointsDetector(nn.Module):
             nn.Conv2d(self.point_feat_channels,
                       self.cls_out_channels,
                       1, 1, 0))
-
+                      
+        self.centerness = nn.Conv2d(self.point_feat_channels, 1, kernel_size=3, stride=1, padding=1)
+        
         bias_init = float(-np.log((1 - 0.01) / 0.01))
         for modules in [
                 self.cls_conv,
@@ -185,7 +282,9 @@ class RepPointsDetector(nn.Module):
                 self.offsets_init,
                 self.offsets_refine,
                 self.deform_cls_conv,
-                self.deform_reg_conv]:
+                self.deform_reg_conv,
+                self.centerness,
+                ]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
                     torch.nn.init.normal_(layer.weight, mean=0, std=0.01)
@@ -228,8 +327,9 @@ class RepPointsDetector(nn.Module):
             grid = self.grid[:height, :width].reshape(-1, 2)
             strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
             point_centers.append(grid * stride)
+            #point_centers.append(grid * stride)
         return point_centers, strides
-
+        
     def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
         '''
             Args:
@@ -240,17 +340,18 @@ class RepPointsDetector(nn.Module):
         '''
         bboxes = []
         # For each level
-        for i, delta in enumerate(deltas):
+        for i in range(len(deltas)):
             """
             delta: (N, C, H_i, W_i),
             C=4 or 18 
             """
+            delta = deltas[i]
             N, C, H_i, W_i = delta.shape
             # (1, 2, H_i, W_i), grid for this feature level.
             base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
 
             # (N*C/2, 2, H_i, W_i)
-            delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+            delta = delta.view(-1, C//2, 2, H_i, W_i).reshape(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
             points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
@@ -266,45 +367,39 @@ class RepPointsDetector(nn.Module):
             bboxes.append(bbox)
         return bboxes
 
+
     @torch.no_grad()
-    def get_ground_truth(self, centers: torch.Tensor, strides, init_boxes, gt_instances):
-        """
-        Get gt according to the init box prediction.
-        The labels for init boxes are generated from point-based distance matching,
-        and the labels refine boxes are generated from the init boxes using the same way
-        with RetinaNet, where the init boxes are regarded as anchors.
-        Args:
-            centers: (X, 2), center coordinates for points in all feature levels.
-            strides: (X), strides for each point in all feature levels.
-            init_boxes: (N, X, 4), init box predection.
-            gt_instances (list[Instances]): a list of N `Instances`s. The i-th
-                `Instances` contains the ground-truth per-instance annotations
-                for the i-th input image.
-        Returns:
-            Tensor (N, X):
-                Foreground/background label for init boxes. It is used to select positions
-                where the init box regression loss is computed.
-            Tensor (N, X, 4):
-                Label for init boxes, will be masked by binary label above.
-            Tensor (N, X):
-                Classification label at all positions,
-                including values -1 for ignoring, [0, self.num_classes -1] fore foreground positions,
-                and self.num_classes for background positions.
-            Tensor (N, X, 4):
-                Label for refine boxes, only foreground positions are considered.
-        """
-        init_objectness_labels = []
-        init_bbox_labels = []
+    def get_ground_truth(self, points: torch.Tensor, strides, init_boxes, gt_instances):
+        object_sizes_of_interest = [
+            [-1, 64],
+            [64, 128],
+            [128, 256],
+            [256, 512],
+            [512, INF],
+        ]
+        expanded_object_sizes_of_interest = []
+        for l, points_per_level in enumerate(points):
+            object_sizes_of_interest_per_level = \
+                points_per_level.new_tensor(object_sizes_of_interest[l])
+            expanded_object_sizes_of_interest.append(
+                object_sizes_of_interest_per_level[None].expand(len(points_per_level), -1)
+            )
+        expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
+
+        init_gt_classes, init_reg_targets, ltrb_offsets = compute_targets_for_locations(
+            points, gt_instances, expanded_object_sizes_of_interest,
+            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
+        )
+
+        centers = torch.cat(points,0)
+        strides = torch.cat(strides,0)
+        
         cls_labels = []
         refine_bbox_labels = []
         for i, targets_per_image in enumerate(gt_instances):
             image_size = targets_per_image.image_size
             centers_invalid = (centers[:, 0] >= image_size[1]).logical_or(
                 centers[:, 1] >= image_size[0])
-
-            init_objectness_label, init_bbox_label = self.matcher(
-                centers, strides, targets_per_image.gt_boxes)
-            init_objectness_label[centers_invalid] = 0
 
             match_quality_matrix = pairwise_iou(
                 targets_per_image.gt_boxes,
@@ -314,26 +409,28 @@ class RepPointsDetector(nn.Module):
             cls_label[bbox_mached == 0] = self.num_classes
             cls_label[centers_invalid] = -1
             refine_bbox_label = targets_per_image.gt_boxes[gt_matched_idxs]
-
-            init_objectness_labels.append(init_objectness_label)
-            init_bbox_labels.append(init_bbox_label)
+            
             cls_labels.append(cls_label)
             refine_bbox_labels.append(refine_bbox_label.tensor)
-
-        return torch.stack(init_objectness_labels),\
-            torch.stack(init_bbox_labels),\
-            torch.stack(cls_labels),\
-            torch.stack(refine_bbox_labels)
+        
+        refine_gt_classes = torch.stack(cls_labels)
+        refine_reg_targets = torch.stack(refine_bbox_labels)
+        
+        
+        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets
+        
 
     def losses(
             self,
             pred_logits,
             pred_init_boxes,
             pred_refine_boxes,
-            gt_init_objectness,
+            pred_centerness,
+            gt_init_cls,
             gt_init_bboxes,
             gt_cls: torch.Tensor,
             gt_refine_bboxes,
+            ltrb_offsets,
             strides):
         """
         Loss computation.
@@ -359,11 +456,14 @@ class RepPointsDetector(nn.Module):
         foreground_idxs = valid_idxs.logical_and(gt_cls != self.num_classes)
         num_foreground = foreground_idxs.sum().item() / gt_init_bboxes.shape[0]
         get_event_storage().put_scalar("num_foreground", num_foreground)
-
+        
+        init_foreground_idxs = (gt_init_cls >= 0).logical_and(gt_init_cls != self.num_classes)
+        num_init_foreground = init_foreground_idxs.sum().item() / gt_init_bboxes.shape[0]
+        
         gt_cls_target = torch.zeros_like(pred_logits)
         gt_cls_target[foreground_idxs, gt_cls[foreground_idxs]] = 1
 
-        self.loss_normalizer = (
+        loss_normalizer = (
             self.loss_normalizer_momentum * self.loss_normalizer
             + (1 - self.loss_normalizer_momentum) * num_foreground
         )
@@ -374,25 +474,43 @@ class RepPointsDetector(nn.Module):
             alpha=self.focal_loss_alpha,
             gamma=self.focal_loss_gamma,
             reduction="sum"
-        ) / max(1, self.loss_normalizer)
+        ) / max(1, num_foreground)
+        
+        gt_center_score = compute_centerness_targets(ltrb_offsets[init_foreground_idxs])
 
-        init_foreground_idxs = gt_init_objectness > 0
+        loss_localization_init = box_iou_loss(
+            pred_init_boxes[init_foreground_idxs], gt_init_bboxes[init_foreground_idxs], gt_center_score,
+            loss_type=self.iou_loss_type
+        ) / max(1, num_init_foreground)
+
+#        loss_localization_refine = box_iou_loss(
+#            pred_refine_boxes[foreground_idxs], gt_refine_bboxes[foreground_idxs], gt_center_score,
+#            loss_type=self.iou_loss_type
+#        ) / max(1, num_foreground)
+
+        pred_center_score = pred_centerness[init_foreground_idxs].view(-1) 
+        loss_centerness = F.binary_cross_entropy_with_logits(
+            pred_center_score, gt_center_score, reduction='sum'
+        ) / max(1, num_init_foreground)
+
         strides = strides[None].repeat(pred_logits.shape[0], 1)
-        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
-        loss_localization_init = smooth_l1_loss(
-            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
-            gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
-            0.11, reduction='sum') / max(1, gt_init_objectness.sum()) * 0.5
+#        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
+#        loss_localization_init = smooth_l1_loss(
+#            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
+#            gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
+#            0.11, reduction='sum') / max(1, num_init_foreground)
 
         coords_norm_refine = strides[foreground_idxs].unsqueeze(-1) * 4
         loss_localization_refine = smooth_l1_loss(
             pred_refine_boxes[foreground_idxs] / coords_norm_refine,
             gt_refine_bboxes[foreground_idxs] / coords_norm_refine,
-            0.11, reduction="sum") / max(1, self.loss_normalizer)
+            0.11, reduction="sum") / max(1, num_foreground)
 
         return {"loss_cls": loss_cls,
                 "loss_localization_init": loss_localization_init,
-                "loss_localization_refine": loss_localization_refine}
+                "loss_localization_refine": loss_localization_refine,
+                "loss_centerness": loss_centerness
+                }
 
     def visualize_training(self, batched_inputs, results):
         """
@@ -411,7 +529,7 @@ class RepPointsDetector(nn.Module):
         ), "Cannot visualize inputs and results of different sizes"
         if self.training:
             storage = get_event_storage()
-        max_boxes = 20
+        max_boxes = 100
 
         image_index = 0  # only visualize a single image
         img = batched_inputs[image_index]["image"].cpu().numpy()
@@ -458,7 +576,7 @@ class RepPointsDetector(nn.Module):
         vp_refine = Visualizer(img, None)
         scores, refine_objectness = refine_logits.sigmoid().max(2)
         _, foreground_idxs = scores[image_index].sort(descending=True)
-        foreground_idxs = foreground_idxs[:20]
+        foreground_idxs = foreground_idxs[:100]
         # foreground_idxs = (refine_objectness[image_index] >= 0).logical_and(refine_objectness[image_index] < self.num_classes).logical_and(scores[image_index] > 0.1)
 
         selected_centers = centers[foreground_idxs].cpu().numpy()
@@ -493,8 +611,6 @@ class RepPointsDetector(nn.Module):
         The prediction at positive positions are shown.
         """
         if self.training:
-            if self.vis_period <= 0:
-                return
             storage = get_event_storage()
             if not storage.iter % self.vis_period == 0:
                 return
@@ -608,8 +724,13 @@ class RepPointsDetector(nn.Module):
 
         cls_features = [self.cls_conv(f) for f in features]
         reg_features = [self.reg_conv(f) for f in features]
+        
+        centerness = [self.centerness(f) for f in cls_features]
 
-        offsets_init = [self.offsets_init(f) for f in reg_features]
+        #if use_dcn_v2, abandon the last 9(or 2) weights channels.
+        offsets_init = [self.offsets_init(f)[:,:2*self.num_points,:,:] for f in reg_features]
+        if self.use_dcn_v2:
+            offsets_init_weights = [self.offsets_init(f)[:,2*self.num_points:,:,:] for f in reg_features]
 
         logits = []
         offsets_refine = []
@@ -626,36 +747,42 @@ class RepPointsDetector(nn.Module):
             pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
                 -1, 18, *pts_out_init_grad_mul.shape[-2:])
             dcn_offset = pts_out_init_grad_mul - self.dcn_base_offset
-
-            logits.append(
-                self.logits(self.deform_cls_conv(cls_features[i], dcn_offset)))
-            offsets_refine.append(
-                self.offsets_refine(
-                    self.deform_reg_conv(reg_features[i], dcn_offset)) +
-                offsets_init[i].detach())
+            
+            if self.use_dcn_v2:
+                offsets_init_weight = (1 - self.gradient_mul) * offsets_init_weights[i].detach()\
+                    + self.gradient_mul * offsets_init_weights[i]
+                logit = self.logits(self.deform_cls_conv(cls_features[i], dcn_offset, offsets_init_weight.sigmoid()))
+                offset_refine = self.offsets_refine(
+                    self.deform_reg_conv(reg_features[i], dcn_offset, offsets_init_weight.sigmoid())) + offsets_init[i].detach()
+            else:
+                logit = self.logits(self.deform_cls_conv(cls_features[i], dcn_offset))
+                offset_refine = self.offsets_refine(
+                    self.deform_reg_conv(reg_features[i], dcn_offset)) + offsets_init[i].detach()
+            logits.append(logit)
+            offsets_refine.append(offset_refine)
+        
 
         point_centers, strides = self.get_center_grid(features)
-
+        
         init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
         refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
-
-        point_centers = torch.cat(point_centers, 0)
-        strides = torch.cat(strides, 0)
-
         if self.training:
-            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
-                self.get_ground_truth(point_centers, strides,
-                                      flat_and_concate_levels(init_boxes), gt_instances)
+            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets =\
+                self.get_ground_truth(point_centers, strides, flat_and_concate_levels(init_boxes), gt_instances)
+                                      
+            #flatten point_centers, strides
+            point_centers = torch.cat(point_centers,0)
+            strides = torch.cat(strides,0)
 
             storage = get_event_storage()
             # This condition is keeped as the code is from RetinaNet in D2.
-            if self.vis_period > 0 and storage.iter % self.vis_period == 0:
-                results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
+            if storage.iter % self.vis_period == 0:
+                results = self.inference(logits, init_boxes, refine_boxes, centerness, images.image_sizes)
                 self.visualize_training(batched_inputs, results)
 
             self.may_visualize_gt(
-                batched_inputs, gt_init_objectness.bool(),
-                gt_init_offsets, gt_cls, gt_refine_offsets,
+                batched_inputs, (init_gt_classes!=self.num_classes).bool(),
+                init_reg_targets, refine_gt_classes, refine_reg_targets,
                 point_centers,
                 flat_and_concate_levels(init_boxes),
                 flat_and_concate_levels(refine_boxes),
@@ -665,14 +792,17 @@ class RepPointsDetector(nn.Module):
                 flat_and_concate_levels(logits),
                 flat_and_concate_levels(init_boxes),
                 flat_and_concate_levels(refine_boxes),
-                gt_init_objectness,
-                gt_init_offsets,
-                gt_cls,
-                gt_refine_offsets,
+                flat_and_concate_levels(centerness),
+                init_gt_classes, 
+                init_reg_targets, 
+                refine_gt_classes, 
+                refine_reg_targets,
+                ltrb_offsets,
                 strides)
-
             return losses
         else:
+            #flatten point_centers, strides
+            point_centers = torch.cat(point_centers,0)
             self.visualize_refine_boxes(
                 batched_inputs,
                 point_centers,
@@ -691,7 +821,7 @@ class RepPointsDetector(nn.Module):
                 processed_results.append({"instances": r})
             return processed_results
 
-    def inference(self, logits, init_boxes, refine_boxes, image_sizes):
+    def inference(self, logits, init_boxes, refine_boxes, centerness, image_sizes):
         results = []
 
         for img_idx, image_size in enumerate(image_sizes):
@@ -700,20 +830,23 @@ class RepPointsDetector(nn.Module):
                                     for init_boxes_per_level in init_boxes]
             refine_boxes_per_image = [refine_boxes_per_level[img_idx]
                                       for refine_boxes_per_level in refine_boxes]
-
+            centerness_per_image = [centerness_per_level[img_idx] for centerness_per_level in centerness]
             results_per_image = self.inference_single_image(
-                logits_per_image, init_boxes_per_image, refine_boxes_per_image, tuple(image_size)
+                logits_per_image, init_boxes_per_image, refine_boxes_per_image, centerness_per_image, tuple(image_size)
             )
             results.append(results_per_image)
         return results
 
-    def inference_single_image(self, logits, init_boxes, refine_boxes, image_size):
+    def inference_single_image(self, logits, init_boxes, refine_boxes, centerness, image_size):
         boxes_all = []
         init_boxes_all = []
         class_idxs_all = []
         scores_all = []
-        for logit, init_box, refine_box in zip(logits, init_boxes, refine_boxes):
-            scores, cls = logit.sigmoid().max(0)
+        for logit, init_box, refine_box, ctr_score in zip(logits, init_boxes, refine_boxes, centerness):
+        #for logit, init_box, refine_box in zip(logits, init_boxes, refine_boxes):
+            logit_score = logit * ctr_score.sigmoid()
+            scores, cls = logit_score.sigmoid().max(0)
+            #scores, cls = logit.sigmoid().max(0)
             cls = cls.view(-1)
             scores = scores.view(-1)
             init_box = init_box.view(4, -1).permute(1, 0)
@@ -775,6 +908,7 @@ class RepPointsDetector(nn.Module):
         keep = keep[: self.max_detections_per_image]
 
         result = Instances(image_size)
+        #result.pred_boxes = Boxes(init_boxes_all[keep])
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]

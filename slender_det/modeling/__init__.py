@@ -13,7 +13,10 @@ from .meta_arch import (
     FCOSRetinaNet,
     FCOSNCRetinaNet,
     CenternessRetinaNet,
-    FCOSV3
+    FCOSV3,
+    RepPointsCenterness,
+    RepPointsNearestCenterness,
+    FCOSRepPoints,
 )
 
 from .proposal_generator import (

@@ -5,7 +5,7 @@ MODEL:
   RESNETS:
     DEPTH: 50
   PROPOSAL_GENERATOR:
-    NUM_POINTS: 2
+    NUM_POINTS: 9
     SAMPLE_MODE: "points"
   RESNETS:
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
@@ -15,6 +15,7 @@ MODEL:
     NORM: "GN"
 SOLVER:
   WARMUP_FACTOR: 0.33
+  IMS_PER_BATCH: 16
 
 VIS_PERIOD: 1024
-OUTPUT_DIR: ./train_log/0704_2points_reppoints_stride1_retinanet_points_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0722_9points_2bbox_retinanet_reppoints_R_50_FPN_1x

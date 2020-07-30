@@ -325,7 +325,7 @@ class FCOSV2(nn.Module):
             # which is used to normalize centerness-weighed reg loss
             sum_centerness_targets_avg_per_gpu = \
                 reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
-
+            
             reg_loss = iou_loss(
                 pred_box_reg[foreground_idxs], reg_targets[foreground_idxs], gt_center_score,
                 loss_type=self.iou_loss_type

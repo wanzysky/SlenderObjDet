@@ -19,7 +19,36 @@ from slender_det.modeling.meta_arch.fcosv2 import FCOSHead
 
 INF = 100000000
 
+import numpy as np
+from concern.smart_path import smart_path
+from os.path import exists
+from os import mknod
+import cv2
+from PIL import Image, ImageDraw
+def save(rgb: np.ndarray, mask: np.ndarray, centers: np.ndarray, *file_names):
+    assert len(file_names) > 0
+    rgb_save_path = smart_path(os.path.join(file_names[0], file_names[1]))
+    mask_save_path = smart_path(os.path.join(file_names[0], file_names[2]))
+    if not exists(rgb_save_path):
+        mknod(rgb_save_path)
+    if not exists(mask_save_path):
+        mknod(mask_save_path)
 
+    im_rgb = Image.fromarray(rgb)
+    im_rgb.save(rgb_save_path)
+    
+        
+    mask = cv2.applyColorMap(mask, 0)
+    
+    im_mask = Image.fromarray(mask)
+    draw = ImageDraw.Draw(im_mask)
+    radis = 2
+    for i in range(len(centers)):
+        draw.pieslice((centers[i,0]-radis,centers[i,1]-radis,centers[i,0]+radis,centers[i,1]+radis),start=0,end=360,fill=128)
+    im_mask.save(mask_save_path)
+    
+    
+        
 def get_num_gpus():
     return int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
 
@@ -145,8 +174,9 @@ def get_sample_region(gt, strides, num_points_per, gt_xs, gt_ys, radius=1.0):
 
 
 def compute_targets_for_locations(
-        locations, targets, object_sizes_of_interest,
-        strides, center_sampling_radius, num_classes, norm_reg_targets=False
+        locations, targets, object_sizes_of_interest, 
+        gt_center_masks, mask_thresh,
+        strides, center_sampling_radius, num_classes, norm_reg_targets=False,
 ):
     num_points = [len(_) for _ in locations]
     # build normalization weights before cat locations
@@ -154,7 +184,7 @@ def compute_targets_for_locations(
     if norm_reg_targets:
         norm_weights = torch.cat([torch.empty(n).fill_(s) for n, s in zip(num_points, strides)])
 
-    locations = torch.cat(locations, dim=0)
+    locations = torch.cat(locations, dim=0).long()
     xs, ys = locations[:, 0], locations[:, 1]
 
     gt_classes = []
@@ -164,6 +194,7 @@ def compute_targets_for_locations(
         bboxes = targets_per_im.gt_boxes.tensor
         gt_classes_per_im = targets_per_im.gt_classes
         area = targets_per_im.gt_boxes.area()
+        gt_center_mask_i = torch.from_numpy(gt_center_masks[im_i]).to(locations.device)
         
         l = xs[:, None] - bboxes[:, 0][None]
         t = ys[:, None] - bboxes[:, 1][None]
@@ -194,6 +225,12 @@ def compute_targets_for_locations(
         gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
         # NOTE: set background labels to NUM_CLASSES not 0
         gt_classes_per_im[locations_to_min_area == INF] = num_classes
+        
+        #set background labels to where gt_center_mask < thresh
+        in_boxes_ids = (locations_to_min_area != INF).nonzero()[:,0]
+        invalid_ids = gt_center_mask_i[locations[in_boxes_ids,1],locations[in_boxes_ids,0]] <= mask_thresh
+        invalid_ids = in_boxes_ids[invalid_ids]
+        gt_classes_per_im[invalid_ids] = num_classes
 
         # calculate regression targets in 'fcos' type
         reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
@@ -277,7 +314,6 @@ class FCOSV3(nn.Module):
             gt_instances = [x["targets"].to(self.device) for x in batched_inputs]
         else:
             gt_instances = None 
-            
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
         box_cls, box_reg, ctr_sco = self.head(features)
@@ -286,30 +322,48 @@ class FCOSV3(nn.Module):
         locations = compute_locations(shapes, self.fpn_strides, self.device)
         
         if self.training:
-            gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances)
-            valid_ids = gt_classes != self.num_classes
-            gt_center_scores = []
-            locations = torch.cat(locations, dim=0)
-            #compute center_score
-            for im_i in range(len(gt_instances)):
-                gt_per_im = gt_instances[im_i]
-                gt_masks = gt_per_im.gt_masks
-                borders, centers, sizes = gt_masks.masks(mask_size=gt_per_im.image_size)
-                valid_id = valid_ids[im_i].nonzero().view(-1)
-                valid_locations = locations[valid_id].flip(1).type(torch.LongTensor)
-                centers = torch.Tensor(centers).to(self.device)
-                gt_center_score = centers[valid_locations[:,0],valid_locations[:,1]]
-                gt_center_scores.append(gt_center_score)
-            gt_center_scores = torch.cat(gt_center_scores,dim=0)
+            while (True):
+                standard = "gaussian"
+                sigma = 0.5
+                mask_thresh = 0.2
+                gt_center_masks = []
+                #compute center_score
+                for im_i in range(len(gt_instances)):
+                    gt_per_im = gt_instances[im_i]
+                    gt_masks = gt_per_im.gt_masks
+                    #standard = 'linear' or 'gaussian', sigma used for gaussian distribution
+                    center_masks_i = gt_masks.center_masks(mask_size=gt_per_im.image_size, standard = standard, sigma = sigma)
+                    gt_center_masks.append(center_masks_i)
+                
+                #mask_thresh screen out locations in gt_boxes whose gt_center_score less than threshold
+                gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances, gt_center_masks, mask_thresh = mask_thresh)
+                
+                #computing gt_center_scores and visualization
+                valid_ids = gt_classes != self.num_classes
+                gt_center_scores = []
+                cat_locations = torch.cat(locations, dim=0)
+                for im_i in range(len(gt_instances)):
+                    valid_id = valid_ids[im_i].nonzero().view(-1)
+                    valid_locations = cat_locations[valid_id].long()
+                    centers= gt_center_masks[im_i]
+                    import ipdb
+                    ipdb.set_trace()
+                    rgb_i = batched_inputs[im_i]['image'].permute(1,2,0).numpy().astype(np.uint8)
+                    save(rgb_i,(centers*255).astype(np.uint8),valid_locations.cpu().numpy(),'./train_log/center_masks','rgb'+str(im_i)+'.png','gaussian_sigma2'+str(im_i)+'.png')
+                    centers = torch.Tensor(centers).to(self.device)
+                    gt_center_score = centers[valid_locations[:,1],valid_locations[:,0]]#valid_location:xy, centers:[h,w]
+                    gt_center_scores.append(gt_center_score)
+                gt_center_scores = torch.cat(gt_center_scores,dim=0)
             losses = self.losses(gt_classes, reg_targets, box_cls, box_reg, ctr_sco, gt_center_scores)
-
+            
             return losses
         else:
             results = self.inference(locations, box_cls, box_reg, ctr_sco, images.image_sizes)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
-
+            
+    
     def losses(self, gt_classes, reg_targets, pred_class_logits, pred_box_reg, pred_center_score, gt_center_score):
         pred_class_logits, pred_box_reg, pred_center_score = \
             permute_and_concat(pred_class_logits, pred_box_reg, pred_center_score, self.num_classes)
@@ -358,7 +412,7 @@ class FCOSV3(nn.Module):
         return dict(cls_loss=cls_loss, reg_loss=reg_loss, centerness_loss=centerness_loss)
 
     @torch.no_grad()
-    def get_ground_truth(self, points, gt_instances):
+    def get_ground_truth(self, points, gt_instances, gt_center_masks, mask_thresh):
         object_sizes_of_interest = [
             [-1, 64],
             [64, 128],
@@ -377,6 +431,7 @@ class FCOSV3(nn.Module):
 
         gt_classes, reg_targets = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
+            gt_center_masks, mask_thresh,
             self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
         )
         return gt_classes, reg_targets

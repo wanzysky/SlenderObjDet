@@ -6,5 +6,5 @@ MODEL:
     DEPTH: 50
   MASK_ON: True
 SOLVER:
-  IMS_PER_BATCH: 16
-OUTPUT_DIR: ./train_log/0708_fcosv3_R_50_FPN_1x
+  IMS_PER_BATCH: 1
+OUTPUT_DIR: ./train_log/0715_gaussian5_maskthresh2_fcosv3_R_50_FPN_1x

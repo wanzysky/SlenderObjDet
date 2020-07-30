@@ -1,6 +1,6 @@
 _BASE_: "../retina/Base-RetinaNet.yaml"
 MODEL:
-  META_ARCHITECTURE: "RepPointsDetector"
+  META_ARCHITECTURE: "RepPointsCenterness"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   RESNETS:
     DEPTH: 50
@@ -12,7 +12,11 @@ MODEL:
     NORM: "GN"
   PROPOSAL_GENERATOR:
     SAMPLE_MODE: "points"
+  FCOS:
+    USE_DCN_V2: False
 SOLVER:
   WARMUP_FACTOR: 0.33
+  IMS_PER_BATCH: 16
 
-OUTPUT_DIR: ./train_log/0729_stride124816_rep_points_detector_R_50_FPN_GN_1x_nearest_points
+#OUTPUT_DIR: ./train_log/0722_rep_points_nearest_centerness_iouloss_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0730_rep_points_fcos_R_50_FPN_1x
