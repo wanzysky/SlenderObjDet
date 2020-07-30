@@ -5,3 +5,4 @@ from .fpn import (
     build_retinanet_resnet_vt_fpn,
     build_retinanet_resnet_vt_fpn_backbone_use_p5
 )
+from .hourglass import build_hourglass_backbone

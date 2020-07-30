@@ -31,6 +31,24 @@ _C.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE = "point"
 _C.MODEL.PROPOSAL_GENERATOR.HEAD_NAME = ""
 
 # ---------------------------------------------------------------------------- #
+# Hourglass Backbone Options used for CornerNet only
+# ---------------------------------------------------------------------------- #
+_C.MODEL.HOURGLASS = CN()
+
+_C.MODEL.HOURGLASS.DEPTH = 50
+_C.MODEL.HOURGLASS.STACKS = 2
+_C.MODEL.HOURGLASS.OUT_FEATURES = ["hourglass3"]
+# Options: FrozenBN, GN, "SyncBN", "BN"
+_C.MODEL.HOURGLASS.NORM = "FrozenBN"
+
+_C.MODEL.HOURGLASS.STEM_OUT_CHANNELS = 128
+
+# ---------------------------------------------------------------------------- #
+# CornerNet Options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.CORNER_NET = CN()
+
+# ---------------------------------------------------------------------------- #
 # FCOS Options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.FCOS = CN()

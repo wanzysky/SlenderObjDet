@@ -1,0 +1,18 @@
+MODEL:
+  META_ARCHITECTURE: "CornerNet"
+  BACKBONE:
+    NAME: "build_hourglass_backbone"
+  HOURGLASS:
+    OUT_FEATURES: ["hourglass2", "hourglass3"]
+
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val",)
+SOLVER:
+  IMS_PER_BATCH: 16
+  BASE_LR: 0.02
+  STEPS: (60000, 80000)
+  MAX_ITER: 90000
+INPUT:
+  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+VERSION: 2
