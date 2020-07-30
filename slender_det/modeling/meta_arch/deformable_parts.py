@@ -144,19 +144,18 @@ class DeformableParts(nn.Module):
                 part_scores, part_boxes)
 
             targets = self.prepare_targets(gt_instances)
-            loss_dict = self.criterion(set_pred, targets)
+            metrics = self.criterion(set_pred, targets)
+            loss_dict = {}
             weight_dict = self.criterion.weight_dict
             momentum = 1e-5
             self.loss_scale = self.loss_scale * (1 - momentum) + 1 * momentum
-            for k in list(loss_dict.keys()):
+            for k in list(metrics.keys()):
                 if k in weight_dict:
-                    loss_dict[k] *= weight_dict[k]
-                loss_dict[k] *= self.loss_scale
-                if "error" in k:
-                    get_event_storage().put_scalar(k, loss_dict.pop(k))
+                    loss_dict[k] = metrics[k] * weight_dict[k]
+                    loss_dict[k] *= self.loss_scale
 
             loss_dict.update(init_losses)
-            return loss_dict
+            return loss_dict, metrics
         else:
             results = self.inference(part_scores, part_boxes, relation)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
