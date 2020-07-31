@@ -43,6 +43,11 @@ _C.MODEL.HOURGLASS.NORM = "FrozenBN"
 
 _C.MODEL.HOURGLASS.STEM_OUT_CHANNELS = 128
 
+# hourglass block options
+_C.MODEL.HOURGLASS.DEPTH_BLOCK = 5
+_C.MODEL.HOURGLASS.CHANNELS_BLOCK = [256, 256, 384, 384, 384, 512]
+_C.MODEL.HOURGLASS.NUM_CONV_BLOCK = [2, 2, 2, 2, 2, 4]
+
 # ---------------------------------------------------------------------------- #
 # CornerNet Options
 # ---------------------------------------------------------------------------- #

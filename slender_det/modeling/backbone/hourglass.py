@@ -234,18 +234,24 @@ def build_hourglass_backbone(cfg, input_shape):
     )
 
     out_features = cfg.MODEL.HOURGLASS.OUT_FEATURES
-    depth = cfg.MODEL.HOURGLASS.DEPTH
     stacks = cfg.MODEL.HOURGLASS.STACKS
+    depth_block = cfg.MODEL.HOURGLASS.DEPTH_BLOCK
+    channels_block = cfg.MODEL.HOURGLASS.CHANNELS_BLOCK
+    num_conv_block = cfg.MODEL.HOURGLASS.NUM_CONV_BLOCK
 
     blocks = [
         HourglassBlock(
-            5, [256, 256, 384, 384, 384, 512], [2, 2, 2, 2, 2, 4],
+            depth_block, channels_block, num_conv_block,
             make_hg_layer=make_hg_layer
         ) for _ in range(stacks)
     ]
-    convs = [Conv2d(256, 256, kernel_size=3, bias=False, padding=1, activation=F.relu_) for _ in range(stacks)]
-    inters = [BasicBlock(256, 256) for _ in range(stacks - 1)]
-    convs_ = [Conv2d(256, 256, kernel_size=1) for _ in range(stacks - 1)]
-    inters_ = [Conv2d(256, 256, kernel_size=1) for _ in range(stacks - 1)]
+    in_channels = channels_block[0]
+    convs = [
+        Conv2d(in_channels, in_channels, kernel_size=3, bias=False, padding=1, activation=F.relu_)
+        for _ in range(stacks)
+    ]
+    inters = [BasicBlock(in_channels, in_channels) for _ in range(stacks - 1)]
+    convs_ = [Conv2d(in_channels, in_channels, kernel_size=1) for _ in range(stacks - 1)]
+    inters_ = [Conv2d(in_channels, in_channels, kernel_size=1) for _ in range(stacks - 1)]
 
     return Hourglass(stem, blocks, convs, inters, convs_, inters_, out_features=out_features)
