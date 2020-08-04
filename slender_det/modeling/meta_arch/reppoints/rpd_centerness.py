@@ -261,19 +261,20 @@ class RepPointsCenterness(nn.Module):
             nn.Conv2d(self.point_feat_channels,
                       init_points_out_dim,
                       1, 1, 0))
+        self.centerness_init = nn.Conv2d(self.point_feat_channels, 1, kernel_size=3, stride=1, padding=1)
 
         self.offsets_refine = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(self.point_feat_channels,
                       points_out_dim,
                       1, 1, 0))
+        self.centerness_refine = nn.Conv2d(self.point_feat_channels, 1, kernel_size=3, stride=1, padding=1)
         self.logits = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(self.point_feat_channels,
                       self.cls_out_channels,
                       1, 1, 0))
                       
-        self.centerness = nn.Conv2d(self.point_feat_channels, 1, kernel_size=3, stride=1, padding=1)
         
         bias_init = float(-np.log((1 - 0.01) / 0.01))
         for modules in [
@@ -283,7 +284,8 @@ class RepPointsCenterness(nn.Module):
                 self.offsets_refine,
                 self.deform_cls_conv,
                 self.deform_reg_conv,
-                self.centerness,
+                self.centerness_init,
+                self.centerness_refine,
                 ]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
@@ -425,7 +427,8 @@ class RepPointsCenterness(nn.Module):
             pred_logits,
             pred_init_boxes,
             pred_refine_boxes,
-            pred_centerness,
+            pred_centerness_init,
+            pred_centerness_refine,
             gt_init_cls,
             gt_init_bboxes,
             gt_cls: torch.Tensor,
@@ -467,34 +470,39 @@ class RepPointsCenterness(nn.Module):
             self.loss_normalizer_momentum * self.loss_normalizer
             + (1 - self.loss_normalizer_momentum) * num_foreground
         )
+        
+        gt_center_score = compute_centerness_targets(ltrb_offsets[init_foreground_idxs])
 
         loss_cls = sigmoid_focal_loss_jit(
             pred_logits[valid_idxs],
             gt_cls_target[valid_idxs],
             alpha=self.focal_loss_alpha,
             gamma=self.focal_loss_gamma,
-            reduction="sum"
-        ) / max(1, num_foreground)
-        
-        gt_center_score = compute_centerness_targets(ltrb_offsets[init_foreground_idxs])
+            reduction="none"
+        )
 
-        loss_localization_init = box_iou_loss(
-            pred_init_boxes[init_foreground_idxs], gt_init_bboxes[init_foreground_idxs], gt_center_score,
-            loss_type='giou'
-        ) / max(1, num_init_foreground)
+        strides = strides[None].repeat(pred_logits.shape[0], 1)
+        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
+        loss_localization_init = smooth_l1_loss(
+            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
+            gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
+            0.11,
+            reduction="none"
+        )
+        loss_localization_init = (loss_localization_init *
+            gt_center_score.unsqueeze(1)).sum() / max(1,
+            num_init_foreground)
 
 #        loss_localization_refine = box_iou_loss(
 #            pred_refine_boxes[foreground_idxs], gt_refine_bboxes[foreground_idxs], gt_center_score,
 #            loss_type=self.iou_loss_type
 #        ) / max(1, num_foreground)
 
-        pred_center_score = pred_centerness[init_foreground_idxs].view(-1) 
-        loss_centerness = F.binary_cross_entropy_with_logits(
+        pred_center_score = pred_centerness_init[init_foreground_idxs].view(-1) 
+        loss_centerness_init = F.binary_cross_entropy_with_logits(
             pred_center_score, gt_center_score, reduction='sum'
         ) / max(1, num_init_foreground)
 
-        strides = strides[None].repeat(pred_logits.shape[0], 1)
-#        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
 #        loss_localization_init = smooth_l1_loss(
 #            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
 #            gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
@@ -504,12 +512,30 @@ class RepPointsCenterness(nn.Module):
         loss_localization_refine = smooth_l1_loss(
             pred_refine_boxes[foreground_idxs] / coords_norm_refine,
             gt_refine_bboxes[foreground_idxs] / coords_norm_refine,
-            0.11, reduction="sum") / max(1, num_foreground)
+            0.11, reduction="none")
+        pred_center_score = pred_centerness_refine[foreground_idxs].view(-1) 
+        gt_center_score = compute_centerness_targets(ltrb_offsets[foreground_idxs])
+        gt_center_score[gt_center_score != gt_center_score] = 1e-2
+        loss_centerness_refine = F.binary_cross_entropy_with_logits(
+            pred_center_score, gt_center_score, reduction='sum'
+        ) / max(1, num_foreground)
+
+        loss_localization_refine = (loss_localization_refine *
+            gt_center_score.unsqueeze(1)).sum() / max(1,
+            num_foreground)
+
+        gt_center_score = compute_centerness_targets(ltrb_offsets[valid_idxs])
+        gt_center_score[gt_center_score != gt_center_score] = 1e-2
+        loss_cls = (loss_cls *
+            gt_center_score.unsqueeze(1)).sum() / max(1,
+            num_foreground)
+
 
         return {"loss_cls": loss_cls,
-                "loss_localization_init": loss_localization_init,
+                "loss_localization_init": loss_localization_init * 0.5,
                 "loss_localization_refine": loss_localization_refine,
-                "loss_centerness": loss_centerness
+                "loss_centerness_init": loss_centerness_init * 0.5,
+                "loss_centerness_refine": loss_centerness_refine
                 }
 
     def visualize_training(self, batched_inputs, results):
@@ -725,7 +751,7 @@ class RepPointsCenterness(nn.Module):
         cls_features = [self.cls_conv(f) for f in features]
         reg_features = [self.reg_conv(f) for f in features]
         
-        centerness = [self.centerness(f) for f in cls_features]
+        centerness_init = [self.centerness_init(f) for f in cls_features]
 
         #if use_dcn_v2, abandon the last 9(or 2) weights channels.
         offsets_init = [self.offsets_init(f)[:,:2*self.num_points,:,:] for f in reg_features]
@@ -734,6 +760,7 @@ class RepPointsCenterness(nn.Module):
 
         logits = []
         offsets_refine = []
+        centerness_refine = []
         for i in range(len(cls_features)):
             pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init[i].detach()\
                 + self.gradient_mul * offsets_init[i]
@@ -755,12 +782,14 @@ class RepPointsCenterness(nn.Module):
                 offset_refine = self.offsets_refine(
                     self.deform_reg_conv(reg_features[i], dcn_offset, offsets_init_weight.sigmoid())) + offsets_init[i].detach()
             else:
-                logit = self.logits(self.deform_cls_conv(cls_features[i], dcn_offset))
+                cls_feature = self.deform_cls_conv(cls_features[i], dcn_offset)
+                logit = self.logits(cls_feature)
+                centerness = self.centerness_refine(cls_feature)
                 offset_refine = self.offsets_refine(
                     self.deform_reg_conv(reg_features[i], dcn_offset)) + offsets_init[i].detach()
             logits.append(logit)
             offsets_refine.append(offset_refine)
-        
+            centerness_refine.append(centerness)
 
         point_centers, strides = self.get_center_grid(features)
         
@@ -777,7 +806,7 @@ class RepPointsCenterness(nn.Module):
             storage = get_event_storage()
             # This condition is keeped as the code is from RetinaNet in D2.
             if storage.iter % self.vis_period == 0:
-                results = self.inference(logits, init_boxes, refine_boxes, centerness, images.image_sizes)
+                results = self.inference(logits, init_boxes, refine_boxes, centerness_refine, images.image_sizes)
                 self.visualize_training(batched_inputs, results)
 
             self.may_visualize_gt(
@@ -792,7 +821,8 @@ class RepPointsCenterness(nn.Module):
                 flat_and_concate_levels(logits),
                 flat_and_concate_levels(init_boxes),
                 flat_and_concate_levels(refine_boxes),
-                flat_and_concate_levels(centerness),
+                flat_and_concate_levels(centerness_init),
+                flat_and_concate_levels(centerness_refine),
                 init_gt_classes, 
                 init_reg_targets, 
                 refine_gt_classes, 
@@ -808,7 +838,7 @@ class RepPointsCenterness(nn.Module):
                 point_centers,
                 flat_and_concate_levels(logits),
                 flat_and_concate_levels(refine_boxes))
-            results = self.inference(logits, init_boxes, refine_boxes, centerness, images.image_sizes)
+            results = self.inference(logits, init_boxes, refine_boxes, centerness_refine, images.image_sizes)
             self.visualize_training(batched_inputs, results)
 
             processed_results = []
@@ -844,8 +874,8 @@ class RepPointsCenterness(nn.Module):
         scores_all = []
         for logit, init_box, refine_box, ctr_score in zip(logits, init_boxes, refine_boxes, centerness):
         #for logit, init_box, refine_box in zip(logits, init_boxes, refine_boxes):
-            logit_score = logit * ctr_score.sigmoid()
-            scores, cls = logit_score.sigmoid().max(0)
+            logit_score = logit.sigmoid() * ctr_score.sigmoid()
+            scores, cls = logit_score.max(0)
             #scores, cls = logit.sigmoid().max(0)
             cls = cls.view(-1)
             scores = scores.view(-1)
