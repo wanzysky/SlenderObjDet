@@ -475,18 +475,18 @@ class COCOeval:
             stats.append(_summarize(1))
             stats.append(_summarize(1, iouThr=.5, maxDets=self.params.maxDets[2]))
             stats.append(_summarize(1, iouThr=.75, maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(1, aptrtoRng=' 0  - 1/8', maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(1, aptrtoRng='1/8 - 1/4', maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(1, aptrtoRng='1/4 - 4/1', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(1, aptrtoRng=' 0  - 1/5', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(1, aptrtoRng='1/5 - 1/3', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(1, aptrtoRng='1/3 - 3', maxDets=self.params.maxDets[2]))
             stats.append(_summarize(1, aptrtoRng='3/1 - 5/1', maxDets=self.params.maxDets[2]))
             stats.append(_summarize(1, aptrtoRng='5/1 - INF', maxDets=self.params.maxDets[2]))
 
             stats.append(_summarize(0, maxDets=self.params.maxDets[0]))
             stats.append(_summarize(0, maxDets=self.params.maxDets[1]))
             stats.append(_summarize(0, maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(0, aptrtoRng=' 0  - 1/8', maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(0, aptrtoRng='1/8 - 1/4', maxDets=self.params.maxDets[2]))
-            stats.append(_summarize(0, aptrtoRng='1/4 - 4/1', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(0, aptrtoRng=' 0  - 1/5', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(0, aptrtoRng='1/5 - 1/3', maxDets=self.params.maxDets[2]))
+            stats.append(_summarize(0, aptrtoRng='1/3 - 3', maxDets=self.params.maxDets[2]))
             stats.append(_summarize(0, aptrtoRng='3/1 - 5/1', maxDets=self.params.maxDets[2]))
             stats.append(_summarize(0, aptrtoRng='5/1 - INF', maxDets=self.params.maxDets[2]))
 
@@ -536,9 +536,9 @@ class Params:
         self.maxDets = [1, 10, 100]
         # self.areaRng = [[0 ** 2, 1e5 ** 2], [0 ** 2, 32 ** 2], [32 ** 2, 96 ** 2], [96 ** 2, 1e5 ** 2]]
         # self.areaRngLbl = ['all', 'small', 'medium', 'large']
-        self.aptrtoRng = [[0 / 1, 1e5 / 1], [0 / 1, 1 / 8], [1 / 8, 1 / 4], [1 / 4, 4 / 1], [3 / 1, 5 / 1],
+        self.aptrtoRng = [[0 / 1, 1e5 / 1], [0 / 1, 1 / 5], [1 / 5, 1 / 3], [1 / 3, 3 / 1], [3 / 1, 5 / 1],
                           [5 / 1, 1e5 / 1]]
-        self.aptrtoRngLbl = ['all', ' 0  - 1/8', '1/8 - 1/4', '1/4 - 4/1', '4/1 - 4/1', '5/1 - INF']
+        self.aptrtoRngLbl = ['all', ' 0  - 1/5', '1/5 - 1/3', '1/3 - 3', '3/1 - 5/1', '5/1 - INF']
         self.useCats = 1
 
     def setKpParams(self):

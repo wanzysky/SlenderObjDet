@@ -8,6 +8,7 @@ from slender_det.structures.masks import PolygonMasks
 
 
 class COCO(Base):
+    oriented = True
     def __init__(self, annotation_file=None, oriented=True):
         """
         Constructor of Microsoft COCO helper class for reading and visualizing annotations.
