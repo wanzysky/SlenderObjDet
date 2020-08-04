@@ -37,7 +37,7 @@ _C.MODEL.HOURGLASS = CN()
 
 _C.MODEL.HOURGLASS.DEPTH = 50
 _C.MODEL.HOURGLASS.STACKS = 2
-_C.MODEL.HOURGLASS.OUT_FEATURES = ["hourglass3"]
+_C.MODEL.HOURGLASS.OUT_FEATURES = ["hourglass2", "hourglass3"]
 # Options: FrozenBN, GN, "SyncBN", "BN"
 _C.MODEL.HOURGLASS.NORM = "FrozenBN"
 
@@ -52,6 +52,10 @@ _C.MODEL.HOURGLASS.NUM_CONV_BLOCK = [2, 2, 2, 2, 2, 4]
 # CornerNet Options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.CORNER_NET = CN()
+
+_C.MODEL.CORNER_NET.IN_FEATURES = ["hourglass2", "hourglass3"]
+_C.MODEL.CORNER_NET.NUM_CLASSES = 80
+_C.MODEL.CORNER_NET.NORM = "FrozenBN"
 
 # ---------------------------------------------------------------------------- #
 # FCOS Options

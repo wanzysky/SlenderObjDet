@@ -1,24 +1,24 @@
 import torch
 from torch import nn
 from torch.autograd import Function
+import torch.nn.functional as F
 
-from mmcv.cnn import ConvModule
-
-from . import corner_pool_ext
+from detectron2.layers import Conv2d, get_norm
+from slender_det import _C
 
 
 class TopPoolFunction(Function):
 
     @staticmethod
     def forward(ctx, input):
-        output = corner_pool_ext.top_pool_forward(input)
+        output = _C.top_pool_forward(input)
         ctx.save_for_backward(input)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         input = ctx.saved_variables[0]
-        output = corner_pool_ext.top_pool_backward(input, grad_output)
+        output = _C.top_pool_backward(input, grad_output)
         return output
 
 
@@ -26,14 +26,14 @@ class BottomPoolFunction(Function):
 
     @staticmethod
     def forward(ctx, input):
-        output = corner_pool_ext.bottom_pool_forward(input)
+        output = _C.bottom_pool_forward(input)
         ctx.save_for_backward(input)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         input = ctx.saved_variables[0]
-        output = corner_pool_ext.bottom_pool_backward(input, grad_output)
+        output = _C.bottom_pool_backward(input, grad_output)
         return output
 
 
@@ -41,14 +41,14 @@ class LeftPoolFunction(Function):
 
     @staticmethod
     def forward(ctx, input):
-        output = corner_pool_ext.left_pool_forward(input)
+        output = _C.left_pool_forward(input)
         ctx.save_for_backward(input)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         input = ctx.saved_variables[0]
-        output = corner_pool_ext.left_pool_backward(input, grad_output)
+        output = _C.left_pool_backward(input, grad_output)
         return output
 
 
@@ -56,14 +56,14 @@ class RightPoolFunction(Function):
 
     @staticmethod
     def forward(ctx, input):
-        output = corner_pool_ext.right_pool_forward(input)
+        output = _C.right_pool_forward(input)
         ctx.save_for_backward(input)
         return output
 
     @staticmethod
     def backward(ctx, grad_output):
         input = ctx.saved_variables[0]
-        output = corner_pool_ext.right_pool_backward(input, grad_output)
+        output = _C.right_pool_backward(input, grad_output)
         return output
 
 
@@ -118,77 +118,75 @@ class CornerPool(nn.Module):
 
 class CornerPoolPack(nn.Module):
     def __init__(
-            self, dim, pool1, pool2,
-            conv_cfg=None, norm_cfg=None,
-            first_kernel_size=3, kernel_size=3, corner_dim=128
+            self, dim, pool1, pool2, first_kernel_size=3, kernel_size=3, corner_dim=128, norm="BN"
     ):
         super(CornerPoolPack, self).__init__()
-        self.p1_conv1 = ConvModule(
+        self.p1_conv1 = Conv2d(
             dim,
             corner_dim,
             first_kernel_size,
-            stride=1,
             padding=(first_kernel_size - 1) // 2,
-            conv_cfg=conv_cfg,
-            norm_cfg=norm_cfg)
-        self.p2_conv1 = ConvModule(
+            bias=False,
+            norm=get_norm(norm, corner_dim),
+            activation=F.relu_,
+        )
+        self.p2_conv1 = Conv2d(
             dim,
             corner_dim,
             first_kernel_size,
-            stride=1,
             padding=(first_kernel_size - 1) // 2,
-            conv_cfg=conv_cfg,
-            norm_cfg=norm_cfg)
+            bias=False,
+            norm=get_norm(norm, corner_dim),
+            activation=F.relu_,
+        )
 
-        self.p_conv1 = nn.Conv2d(corner_dim, dim, 3, padding=1, bias=False)
-        self.p_gn1 = nn.GroupNorm(num_groups=32, num_channels=dim)
+        # self.p_conv1 = nn.Conv2d(corner_dim, dim, 3, padding=1, bias=False)
+        # self.p_gn1 = nn.GroupNorm(num_groups=32, num_channels=dim)
+        self.p_conv1 = Conv2d(corner_dim, dim, 3, padding=1, bias=False, norm=get_norm(norm, dim))
+        self.conv1 = Conv2d(dim, dim, 1, bias=False, norm=get_norm(norm, dim))
 
-        self.conv1 = nn.Conv2d(dim, dim, 1, bias=False)
-        self.gn1 = nn.GroupNorm(num_groups=32, num_channels=dim)
-        self.relu1 = nn.ReLU(inplace=True)
-
-        self.conv2 = ConvModule(
+        self.conv2 = Conv2d(
             dim,
             dim,
             kernel_size,
             stride=1,
             padding=(kernel_size - 1) // 2,
-            conv_cfg=conv_cfg,
-            norm_cfg=norm_cfg)
+            bias=False,
+            norm=get_norm(norm, dim),
+            activation=F.relu_,
+        )
 
         self.pool1 = pool1
         self.pool2 = pool2
 
     def forward(self, x):
-        # pool 1
+        conv1 = F.relu_(self.conv1(x))
+
+        # pool 1 and pool 2
         p1_conv1 = self.p1_conv1(x)
         pool1 = self.pool1(p1_conv1)
-
-        # pool 2
         p2_conv1 = self.p2_conv1(x)
         pool2 = self.pool2(p2_conv1)
-
         # pool 1 + pool 2
         p_conv1 = self.p_conv1(pool1 + pool2)
-        p_gn1 = self.p_gn1(p_conv1)
 
-        conv1 = self.conv1(x)
-        gn1 = self.gn1(conv1)
-        relu1 = self.relu1(p_gn1 + gn1)
+        out = F.relu_(p_conv1 + conv1)
+        out = self.conv2(out)
 
-        conv2 = self.conv2(relu1)
-        return conv2
+        return out
 
 
 class TLPool(CornerPoolPack):
-    def __init__(self, dim, conv_cfg=None, norm_cfg=None, first_kernel_size=3, kernel_size=3, corner_dim=128):
+    def __init__(self, dim, first_kernel_size=3, kernel_size=3, corner_dim=128):
         super(TLPool, self).__init__(
             dim, CornerPool('top'), CornerPool('left'),
-            conv_cfg, norm_cfg, first_kernel_size, kernel_size, corner_dim)
+            first_kernel_size, kernel_size, corner_dim
+        )
 
 
 class BRPool(CornerPoolPack):
-    def __init__(self, dim, conv_cfg=None, norm_cfg=None, first_kernel_size=3, kernel_size=3, corner_dim=128):
+    def __init__(self, dim, first_kernel_size=3, kernel_size=3, corner_dim=128):
         super(BRPool, self).__init__(
             dim, CornerPool('bottom'), CornerPool('right'),
-            conv_cfg, norm_cfg, first_kernel_size, kernel_size, corner_dim)
+            first_kernel_size, kernel_size, corner_dim
+        )

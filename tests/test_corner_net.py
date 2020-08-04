@@ -9,6 +9,7 @@ from detectron2.checkpoint import DetectionCheckpointer
 import init_paths
 from slender_det.config import get_cfg
 from slender_det.modeling.backbone import build_backbone
+from slender_det.modeling import build_model
 
 # get cfg
 cfg = get_cfg()
@@ -16,12 +17,12 @@ cfg.merge_from_file("configs/corner/Base-CornerNet.yaml")
 
 # get model
 device = torch.device("cuda")
-model = None
+model = build_model(cfg)
 
-# # get batch data
-# data_loader = build_detection_train_loader(cfg)
-# data_loader_iter = iter(data_loader)
-# data = next(data_loader_iter)
+# get batch data
+data_loader = build_detection_train_loader(cfg)
+data_loader_iter = iter(data_loader)
+data = next(data_loader_iter)
 
 
 def test_backbone():
@@ -42,9 +43,8 @@ def test_backbone():
 
 
 def test_training():
-    if model is not None:
-        model.train()
-        # outs = model(data[:2])
+    model.train()
+    model(data[:2])
 
     import pdb
     pdb.set_trace()

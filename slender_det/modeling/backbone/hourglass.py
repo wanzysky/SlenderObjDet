@@ -159,7 +159,7 @@ class HourglassBlock(CNNBlockBase):
         out = self.low2(out)
         out = self.low3(out)
 
-        out = F.upsample(out, scale_factor=2)
+        out = F.interpolate(out, scale_factor=2)
         out += up1
 
         return out
@@ -192,6 +192,7 @@ class Hourglass(Backbone):
             self._out_feature_strides[name] = current_stride = current_stride * block.stride
             self._out_feature_channels[name] = block.out_channels
 
+        self._size_divisibility = self.stem.stride * (2 ** 5)
         self._out_features = out_features
         assert len(self._out_features)
         children = [x[0] for x in self.named_children()]
@@ -221,6 +222,10 @@ class Hourglass(Backbone):
                 x = stage["inter"](x)
 
         return outputs
+
+    @property
+    def size_divisibility(self):
+        return self._size_divisibility
 
 
 @BACKBONE_REGISTRY.register()
