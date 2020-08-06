@@ -1,6 +1,6 @@
 #include <torch/extension.h>
 #include "corner_pool/corner_pool.h"
-#include "border_align/border_align.h"
+#include "border_align/BorderAlign.h"
 
 namespace slender_det {
 
@@ -74,10 +74,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("right_pool_backward", &right_pool_backward, "Right Pool Backward");
   m.def("top_pool_forward", &top_pool_forward, "Top Pool Forward");
   m.def("top_pool_backward", &top_pool_backward, "Top Pool Backward");
-  
+
   m.def("border_align_forward", &BorderAlign_Forward, "BorderAlign_Forward");
   m.def("border_align_backward", &BorderAlign_Backward, "BorderAlign_Backward");
-}
 }
 
 } // namespace slender_det

@@ -50,9 +50,6 @@ def get_extensions():
     sources = [main_source] + sources
     extension = CppExtension
 
-    print(sources)
-    print(source_cuda)
-
     extra_compile_args = {"cxx": []}
     define_macros = []
 
