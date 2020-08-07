@@ -325,7 +325,7 @@ class FCOSV2(nn.Module):
             # which is used to normalize centerness-weighed reg loss
             sum_centerness_targets_avg_per_gpu = \
                 reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
-            
+
             reg_loss = iou_loss(
                 pred_box_reg[foreground_idxs], reg_targets[foreground_idxs], gt_center_score,
                 loss_type=self.iou_loss_type
@@ -536,13 +536,15 @@ class FCOSHead(torch.nn.Module):
         self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
 
         # initialization
-        for modules in [self.cls_tower, self.bbox_tower,
-                        self.cls_logits, self.bbox_pred,
-                        self.centerness]:
+        for modules in [self.cls_tower, self.bbox_tower, self.cls_logits, self.bbox_pred, self.centerness]:
             for l in modules.modules():
                 if isinstance(l, nn.Conv2d):
                     torch.nn.init.normal_(l.weight, std=0.01)
                     torch.nn.init.constant_(l.bias, 0)
+                # add weight init for gn
+                if isinstance(layer, nn.GroupNorm):
+                    torch.nn.init.constant_(layer.weight, 1)
+                    torch.nn.init.constant_(layer.bias, 0)
 
         # initialize the bias for focal loss
         prior_prob = cfg.MODEL.FCOS.PRIOR_PROB
