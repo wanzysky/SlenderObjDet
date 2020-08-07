@@ -543,8 +543,8 @@ class FCOSHead(torch.nn.Module):
                     torch.nn.init.constant_(l.bias, 0)
                 # add weight init for gn
                 if isinstance(l, nn.GroupNorm):
-                    torch.nn.init.constant_(layer.weight, 1)
-                    torch.nn.init.constant_(layer.bias, 0)
+                    torch.nn.init.constant_(l.weight, 1)
+                    torch.nn.init.constant_(l.bias, 0)
 
         # initialize the bias for focal loss
         prior_prob = cfg.MODEL.FCOS.PRIOR_PROB
