@@ -3,3 +3,12 @@ MODEL:
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   RESNETS:
     DEPTH: 50
+  FCOS:
+    CENTER_SAMPLING_RADIUS: 1.5
+    IOU_LOSS_TYPE: "giou"
+
+    CENTERNESS_ON_REG: True
+    NORM_REG_TARGETS: True
+
+INPUT:
+  MIN_SIZE_TRAIN: (800,)

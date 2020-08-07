@@ -4,7 +4,3 @@ MODEL:
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   RESNETS:
     DEPTH: 50
-SOLVER:
-  IMS_PER_BATCH: 2
-  
-OUTPUT_DIR: ./train_log/0724_FCOSV2_R_50_FPN_1x
