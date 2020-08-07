@@ -19,15 +19,18 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_K
 
-from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
+from slender_det.modeling.meta_arch.reppoints import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from slender_det.modeling.meta_arch.fcosv2 import INF
+
+INF = 100000000
+
 __all__ = ["CenternessRetinaNet"]
+
 
 @META_ARCH_REGISTRY.register()
 class CenternessRetinaNet(RetinaNet):
 
-    #using nearest assign
+    # using nearest assign
     @torch.no_grad()
     def label_anchors(self, anchors, gt_instances):
         """
@@ -48,14 +51,14 @@ class CenternessRetinaNet(RetinaNet):
                 feature maps. The values are the matched gt boxes for each anchor.
                 Values are undefined for those anchors not labeled as foreground.
         """
-        
-        #generate strides: [R]
-        points=[]
+
+        # generate strides: [R]
+        points = []
         for i in range(len(anchors)):
             anchor = anchors[i].tensor
-            center = torch.stack(((anchor[:,0]+ anchor[:,2])//2,(anchor[:,1]+ anchor[:,3])//2), dim = 1)
+            center = torch.stack(((anchor[:, 0] + anchor[:, 2]) // 2, (anchor[:, 1] + anchor[:, 3]) // 2), dim=1)
             points.append(center)
-        
+
         object_sizes_of_interest = [
             [-1, 64],
             [64, 128],
@@ -77,8 +80,8 @@ class CenternessRetinaNet(RetinaNet):
             [8, 16, 32, 64, 128], 0, 80, False
         )
         return gt_classes, reg_targets
-        
-        
+
+
 def compute_targets_for_locations(
         locations, targets, object_sizes_of_interest,
         strides, center_sampling_radius, num_classes, norm_reg_targets=False
@@ -104,7 +107,7 @@ def compute_targets_for_locations(
         t = ys[:, None] - bboxes[:, 1][None]
         r = bboxes[:, 2][None] - xs[:, None]
         b = bboxes[:, 3][None] - ys[:, None]
-        #[len(locations),len(bboxes),4]
+        # [len(locations),len(bboxes),4]
         reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
 
         is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
@@ -114,8 +117,8 @@ def compute_targets_for_locations(
         is_cared_in_the_level = \
             (max_reg_targets_per_im >= object_sizes_of_interest[:, [0]]) & \
             (max_reg_targets_per_im <= object_sizes_of_interest[:, [1]])
-        
-        #[len(locations),len(bboxes)]
+
+        # [len(locations),len(bboxes)]
         locations_to_gt_area = area[None].repeat(len(locations), 1)
         locations_to_gt_area[is_in_boxes == 0] = INF
         locations_to_gt_area[is_cared_in_the_level == 0] = INF
@@ -129,9 +132,9 @@ def compute_targets_for_locations(
         gt_classes_per_im[locations_to_min_area == INF] = num_classes
 
         # calculate regression targets in 'fcos' type
-        bboxes_per_im = bboxes[None].repeat(len(locations),1,1)
+        bboxes_per_im = bboxes[None].repeat(len(locations), 1, 1)
         reg_targets_per_im = bboxes_per_im[range(len(locations)), locations_to_gt_inds]
-        #reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+        # reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
         if norm_reg_targets and norm_weights is not None:
             reg_targets_per_im /= norm_weights[:, None]
 

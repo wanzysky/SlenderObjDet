@@ -13,8 +13,8 @@ from detectron2.structures import ImageList, Instances, Boxes
 from detectron2.layers import ShapeSpec, batched_nms
 from detectron2.modeling.postprocessing import detector_postprocess
 
-from ..backbone import build_backbone
-from ...layers import Scale, iou_loss, DFConv2d
+from slender_det.modeling.backbone import build_backbone
+from slender_det.layers import Scale, iou_loss, DFConv2d
 
 INF = 100000000
 

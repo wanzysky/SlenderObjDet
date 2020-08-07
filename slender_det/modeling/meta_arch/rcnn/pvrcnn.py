@@ -30,8 +30,6 @@ class ProposalVisibleRCNN(GeneralizedRCNN):
 
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
-        
-        
 
         if detected_instances is None:
             if self.proposal_generator:

@@ -13,8 +13,8 @@ from detectron2.structures import ImageList, Instances, Boxes
 from detectron2.layers import ShapeSpec, batched_nms, cat
 from detectron2.modeling.postprocessing import detector_postprocess
 
-from ..backbone import build_backbone
-from ...layers import Scale, iou_loss, DFConv2d
+from slender_det.modeling.backbone import build_backbone
+from slender_det.layers import Scale, iou_loss, DFConv2d
 
 INF = 100000000
 
@@ -542,7 +542,7 @@ class FCOSHead(torch.nn.Module):
                     torch.nn.init.normal_(l.weight, std=0.01)
                     torch.nn.init.constant_(l.bias, 0)
                 # add weight init for gn
-                if isinstance(layer, nn.GroupNorm):
+                if isinstance(l, nn.GroupNorm):
                     torch.nn.init.constant_(layer.weight, 1)
                     torch.nn.init.constant_(layer.bias, 0)
 
@@ -569,11 +569,7 @@ class FCOSHead(torch.nn.Module):
 
             bbox_pred = self.scales[l](self.bbox_pred(box_tower))
             if self.norm_reg_targets:
-                bbox_pred = F.relu(bbox_pred)
-                if self.training:
-                    bbox_reg.append(bbox_pred)
-                else:
-                    bbox_reg.append(bbox_pred * self.fpn_strides[l])
+                bbox_reg.append(F.relu(bbox_pred) * self.fpn_strides[l])
             else:
                 bbox_reg.append(torch.exp(bbox_pred))
         return logits, bbox_reg, centerness

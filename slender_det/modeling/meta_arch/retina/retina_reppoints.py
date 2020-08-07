@@ -1,10 +1,12 @@
+import cv2
 import math
 import numpy as np
 from typing import List
+
 import torch
-from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from torch import nn
 from torch.nn import functional as F
+from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 
 from detectron2.data.detection_utils import convert_image_to_rgb
 from detectron2.layers import ShapeSpec, batched_nms, cat, DeformConv
@@ -19,10 +21,11 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_K
 
-from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
+from slender_det.modeling.meta_arch.reppoints import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-import cv2
-__all__ = ["ReppointsRetinaNet","ReppointsRetinaNetHead"]
+
+__all__ = ["ReppointsRetinaNet", "ReppointsRetinaNetHead"]
+
 
 @META_ARCH_REGISTRY.register()
 class ReppointsRetinaNet(nn.Module):
@@ -40,9 +43,9 @@ class ReppointsRetinaNet(nn.Module):
         self.score_threshold = cfg.MODEL.RETINANET.SCORE_THRESH_TEST
         self.nms_threshold = cfg.MODEL.RETINANET.NMS_THRESH_TEST
         self.max_detections_per_image = cfg.TEST.DETECTIONS_PER_IMAGE
-        
+
         self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
-        
+
         self.backbone = build_backbone(cfg)
         backbone_shape = self.backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
@@ -54,11 +57,11 @@ class ReppointsRetinaNet(nn.Module):
         self.loss_normalizer_momentum = 0.9
         input_shape = self.backbone.output_shape()
         self.strides = [input_shape[f].stride for f in self.in_features]
-        
+
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
         self.vis_period = 1024
-        
+
         # Assigning init box labels.
         if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
             from slender_det.modeling.matchers.rep_matcher import rep_points_match
@@ -77,7 +80,7 @@ class ReppointsRetinaNet(nn.Module):
             cfg.MODEL.RETINANET.IOU_LABELS,
             allow_low_quality_matches=True,
         )
-        
+
     def forward(self, batched_inputs):
         """
         Args:
@@ -99,32 +102,32 @@ class ReppointsRetinaNet(nn.Module):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
-        
-        #no anchors!
-        #anchors = self.anchor_generator(features)
-        
-        #pred_deltas changes from [dx,dy,dw,dh] of retina to [x1,y1,x2,y2]
-        #List[[N,C,H,W]]
+
+        # no anchors!
+        # anchors = self.anchor_generator(features)
+
+        # pred_deltas changes from [dx,dy,dw,dh] of retina to [x1,y1,x2,y2]
+        # List[[N,C,H,W]]
         logits, offsets_init, offsets_refine = self.head(features)
-        
-        #List[[H*W,2]] List[[H*W]]
+
+        # List[[H*W,2]] List[[H*W]]
         point_centers, strides = self.get_center_grid(features)
-        
-        #List[[N,4,H,W]]
-        init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
-        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
-        #flatten point_centers, strides
-        point_centers = torch.cat(point_centers,0)
-        strides = torch.cat(strides,0)
+
+        # List[[N,4,H,W]]
+        init_boxes = self.points2bbox(point_centers, offsets_init, [1, 2, 4, 8, 16])
+        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1, 2, 4, 8, 16])
+        # flatten point_centers, strides
+        point_centers = torch.cat(point_centers, 0)
+        strides = torch.cat(strides, 0)
         if self.training:
             assert "instances" in batched_inputs[0], "Instance annotations are missing in training!"
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
 
-            #init_bbox and refine_bbox are assign by different matcher: nearest vs IoU
-            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
+            # init_bbox and refine_bbox are assign by different matcher: nearest vs IoU
+            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets = \
                 self.get_ground_truth(point_centers, strides,
                                       flat_and_concate_levels(init_boxes), gt_instances)
-            
+
             storage = get_event_storage()
             # This condition is keeped as the code is from RetinaNet in D2.
             if storage.iter % self.vis_period == 0:
@@ -153,10 +156,10 @@ class ReppointsRetinaNet(nn.Module):
 
         else:
             results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
-#            results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
+            #            results = self.inference(anchors, pred_logits, pred_anchor_deltas, images.image_sizes)
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
-                results, batched_inputs, images.image_sizes
+                    results, batched_inputs, images.image_sizes
             ):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])
@@ -203,8 +206,8 @@ class ReppointsRetinaNet(nn.Module):
         gt_cls_target[foreground_idxs, gt_cls[foreground_idxs]] = 1
 
         self.loss_normalizer = (
-            self.loss_normalizer_momentum * self.loss_normalizer
-            + (1 - self.loss_normalizer_momentum) * num_foreground
+                self.loss_normalizer_momentum * self.loss_normalizer
+                + (1 - self.loss_normalizer_momentum) * num_foreground
         )
 
         loss_cls = sigmoid_focal_loss_jit(
@@ -232,7 +235,7 @@ class ReppointsRetinaNet(nn.Module):
         return {"loss_cls": loss_cls,
                 "loss_localization_init": loss_localization_init,
                 "loss_localization_refine": loss_localization_refine}
-      
+
     def inference(self, logits, init_boxes, refine_boxes, image_sizes):
         results = []
 
@@ -306,19 +309,22 @@ class ReppointsRetinaNet(nn.Module):
             stride = self.strides[f_i]
             # HxW, 2
             grid = self.grid[:height, :width].reshape(-1, 2)
-            strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
+            strides.append(torch.full((grid.shape[0],), stride, device=grid.device))
             point_centers.append(grid * stride)
-            #point_centers.append(grid * stride)
+            # point_centers.append(grid * stride)
         return point_centers, strides
-        
-    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
-        '''
-            Args:
-                base_grids: List[[H*W,2]] coordinate of each feature map
-                deltas: List[[N,C,H,W]] offsets
-            Returns:
-                bboxes: List[[N,4,H,W]]
-        '''
+
+    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=(1, 1, 1, 1, 1)):
+        """
+        Args:
+            base_grids: List[[H*W,2]] coordinate of each feature map
+            deltas: List[[N,C,H,W]] offsets
+            point_strides (tuple[Int]) :
+        Returns:
+            bboxes: List[[N,4,H,W]]
+
+        """
+
         bboxes = []
         use_2points = True
         # For each level
@@ -329,16 +335,15 @@ class ReppointsRetinaNet(nn.Module):
             """
             delta = deltas[i]
             if use_2points:
-                delta = delta[:,:4,:,:]
+                delta = delta[:, :4, :, :]
             N, C, H_i, W_i = delta.shape
             # (1, 2, H_i, W_i), grid for this feature level.
             base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
-            
 
             # (N*C/2, 2, H_i, W_i)
-            delta = delta.view(-1, C//2, 2, H_i, W_i).reshape(-1, 2, H_i, W_i)
+            delta = delta.view(-1, C // 2, 2, H_i, W_i).reshape(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
-            points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).view(-1, C // 2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
             bbox_left = pts_x.min(dim=1, keepdim=True)[0]
@@ -352,7 +357,6 @@ class ReppointsRetinaNet(nn.Module):
             bboxes.append(bbox)
         return bboxes
 
-                
     @torch.no_grad()
     def get_ground_truth(self, centers: torch.Tensor, strides, init_boxes, gt_instances):
         """
@@ -380,7 +384,7 @@ class ReppointsRetinaNet(nn.Module):
             Tensor (N, X, 4):
                 Label for refine boxes, only foreground positions are considered.
         """
-        #the init_bbox uses point-based nearest assign, the refine_bbox uses IoU based assign
+        # the init_bbox uses point-based nearest assign, the refine_bbox uses IoU based assign
         init_objectness_labels = []
         init_bbox_labels = []
         cls_labels = []
@@ -408,12 +412,11 @@ class ReppointsRetinaNet(nn.Module):
             cls_labels.append(cls_label)
             refine_bbox_labels.append(refine_bbox_label.tensor)
 
-        return torch.stack(init_objectness_labels),\
-            torch.stack(init_bbox_labels),\
-            torch.stack(cls_labels),\
-            torch.stack(refine_bbox_labels)
-            
-            
+        return torch.stack(init_objectness_labels), \
+               torch.stack(init_bbox_labels), \
+               torch.stack(cls_labels), \
+               torch.stack(refine_bbox_labels)
+
     def preprocess_image(self, batched_inputs):
         """
         Normalize, pad and batch the input images.
@@ -422,11 +425,10 @@ class ReppointsRetinaNet(nn.Module):
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         return images
-        
+
     @property
     def device(self):
         return self.pixel_mean.device
-
 
     def visualize_training(self, batched_inputs, results):
         """
@@ -471,8 +473,7 @@ class ReppointsRetinaNet(nn.Module):
             webcv2.imshow('result', prop_img)
             webcv2.waitKey()
         '''
-        
-        
+
     def may_visualize_gt(
             self,
             batched_inputs,
@@ -535,9 +536,9 @@ class ReppointsRetinaNet(nn.Module):
         refine_image = vp_refine.get_image()
         for point in selected_centers:
             refine_image = cv2.circle(refine_image, tuple(point), 3, (255, 255, 255))
-        
+
         vis_img = np.vstack((init_image, refine_image))
-        #vis_img = np.vstack((init_image.get(), refine_image.get()))
+        # vis_img = np.vstack((init_image.get(), refine_image.get()))
         if self.training:
             vis_img = vis_img.transpose(2, 0, 1)
             storage.put_image("TOP: init pred boxes; Bottom: refine pred boxes", vis_img)
@@ -548,29 +549,30 @@ class ReppointsRetinaNet(nn.Module):
             webcv2.imshow('pred', vis_img)
             webcv2.waitKey()
         '''
-        
+
+
 class ReppointsRetinaNetHead(nn.Module):
 
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__()
-        #the same as RetinaNetHead, we replace the cls_score net to logits net, which utilizes the deform_conv
+        # the same as RetinaNetHead, we replace the cls_score net to logits net, which utilizes the deform_conv
         # fmt: off
-        in_channels      = input_shape[0].channels
-        num_classes      = cfg.MODEL.RETINANET.NUM_CLASSES
-        num_convs        = cfg.MODEL.RETINANET.NUM_CONVS
-        prior_prob       = cfg.MODEL.RETINANET.PRIOR_PROB
-        #please add it in cfg!
+        in_channels = input_shape[0].channels
+        num_classes = cfg.MODEL.RETINANET.NUM_CLASSES
+        num_convs = cfg.MODEL.RETINANET.NUM_CONVS
+        prior_prob = cfg.MODEL.RETINANET.PRIOR_PROB
+        # please add it in cfg!
         self.num_points = cfg.MODEL.PROPOSAL_GENERATOR.NUM_POINTS
         self.point_feat_channels = 256
-        self.cls_out_channels = num_classes - 1# maybe not right
-#        num_anchors      = build_anchor_generator(cfg, input_shape).num_cell_anchors
-#        # fmt: on
-#        assert (
-#            len(set(num_anchors)) == 1
-#        ), "Using different number of anchors between levels is not currently supported!"
-#        num_anchors = num_anchors[0]
-        
-        #dcn_base_offset
+        self.cls_out_channels = num_classes - 1  # maybe not right
+        #        num_anchors      = build_anchor_generator(cfg, input_shape).num_cell_anchors
+        #        # fmt: on
+        #        assert (
+        #            len(set(num_anchors)) == 1
+        #        ), "Using different number of anchors between levels is not currently supported!"
+        #        num_anchors = num_anchors[0]
+
+        # dcn_base_offset
         self.dcn_kernel = int(np.sqrt(9))
         # 1 for kernel 3.
         self.dcn_pad = int((self.dcn_kernel - 1) / 2)
@@ -581,9 +583,9 @@ class ReppointsRetinaNetHead(nn.Module):
         dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
         dcn_base_offset = torch.tensor(dcn_base_offset, dtype=torch.float32).view(1, -1, 1, 1)
         self.register_buffer("dcn_base_offset", dcn_base_offset)
-        
+
         self.gradient_mul = 0.1
-        
+
         self.cls_conv = nn.Sequential(
             *self.stacked_convs())
         self.reg_conv = nn.Sequential(
@@ -621,12 +623,12 @@ class ReppointsRetinaNetHead(nn.Module):
 
         bias_init = float(-np.log((1 - 0.01) / 0.01))
         for modules in [
-                self.cls_conv,
-                self.reg_conv,
-                self.offsets_init,
-                self.offsets_refine,
-                self.deform_cls_conv,
-                self.deform_reg_conv]:
+            self.cls_conv,
+            self.reg_conv,
+            self.offsets_init,
+            self.offsets_refine,
+            self.deform_cls_conv,
+            self.deform_reg_conv]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
                     torch.nn.init.normal_(layer.weight, mean=0, std=0.01)
@@ -649,9 +651,9 @@ class ReppointsRetinaNetHead(nn.Module):
                     nn.ReLU(inplace=True)
                 ))
         return convs
-        
+
     def forward(self, features):
-    
+
         logits = []
         offsets_refine = []
         cls_features = [self.cls_conv(f) for f in features]
@@ -661,7 +663,7 @@ class ReppointsRetinaNetHead(nn.Module):
 
         logits = []
         offsets_refine = []
-        offsets_init_9points = [] # only used in dcn_offset generation
+        offsets_init_9points = []  # only used in dcn_offset generation
         if self.num_points == 2:
             for i in range(len(cls_features)):
                 offsets_init_9points_i = self.gen_grid_from_reg(offsets_init[i])
@@ -669,8 +671,8 @@ class ReppointsRetinaNetHead(nn.Module):
         else:
             offsets_init_9points = offsets_init
         for i in range(len(cls_features)):
-            pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init_9points[i].detach()\
-                + self.gradient_mul * offsets_init_9points[i]
+            pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init_9points[i].detach() \
+                                    + self.gradient_mul * offsets_init_9points[i]
             # N, 18, H, W --> N, 9, 2(x, y), H, W --> N, 9, 2(y, x), H, W
             # BUGGY: assuming self.num_points == 9
             pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
@@ -687,10 +689,9 @@ class ReppointsRetinaNetHead(nn.Module):
             offsets_refine.append(
                 self.offsets_refine(
                     self.deform_reg_conv(reg_features[i], dcn_offset)) +
-                    #self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
+                # self.deform_reg_conv(reg_features[i], pts_out_init_grad_mul)) +
                 offsets_init[i].detach())
         return logits, offsets_init, offsets_refine
-
 
     def gen_grid_from_reg(self, reg):
         b, c, h, w = reg.shape
@@ -709,4 +710,3 @@ class ReppointsRetinaNetHead(nn.Module):
         grid_xy = torch.stack([grid_x, grid_y], dim=2)
         grid_xy = grid_xy.view(b, -1, h, w)
         return grid_xy
-

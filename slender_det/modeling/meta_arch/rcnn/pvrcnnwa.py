@@ -4,8 +4,10 @@ from typing import Dict, List, Optional, Tuple, Union
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
 from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY, StandardROIHeads
 from detectron2.modeling.meta_arch import GeneralizedRCNN, META_ARCH_REGISTRY
+
 from slender_det.modeling.detector_postprocessing_with_anchor import detector_postprocess_with_anchor
-from slender_det.modeling.meta_arch import ProposalVisibleRCNN
+from .pvrcnn import ProposalVisibleRCNN
+
 
 @META_ARCH_REGISTRY.register()
 class ProposalVisibleRCNNWithAnchor(ProposalVisibleRCNN):

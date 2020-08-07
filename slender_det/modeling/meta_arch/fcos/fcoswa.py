@@ -11,7 +11,8 @@ from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.structures import ImageList, Instances, Boxes
 from detectron2.layers import ShapeSpec, batched_nms, DeformConv
 from slender_det.modeling.detector_postprocessing_with_anchor import detector_postprocess_with_anchor
-from slender_det.modeling.meta_arch import FCOS
+from .fcos import FCOS
+
 
 @META_ARCH_REGISTRY.register()
 class FCOSWithAnchor(FCOS):
@@ -63,7 +64,7 @@ class FCOSWithAnchor(FCOS):
                 per_locations[:, 0] + per_box_regression[:, 2],
                 per_locations[:, 1] + per_box_regression[:, 3],
             ], dim=1)
-            
+
             anchors = torch.stack([
                 per_locations[:, 0],
                 per_locations[:, 1],

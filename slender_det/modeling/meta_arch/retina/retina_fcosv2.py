@@ -5,6 +5,7 @@ import torch
 from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from torch import nn
 from torch.nn import functional as F
+import torch.distributed as dist
 
 from detectron2.data.detection_utils import convert_image_to_rgb
 from detectron2.layers import ShapeSpec, batched_nms, cat, DeformConv
@@ -19,13 +20,16 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_K
 
-from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
+from slender_det.modeling.meta_arch.reppoints import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from slender_det.modeling.meta_arch.fcosv2 import compute_locations, compute_locations_per_level, compute_centerness_targets, permute_and_concat
-from slender_det.modeling.meta_arch.fcosv2 import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, permute_to_N_HW_K
-import torch.distributed as dist
-from ...layers import Scale, iou_loss, DFConv2d
-__all__ = ["FCOSRetinaNet","FCOSRetinaNetHead"]
+from slender_det.modeling.meta_arch.fcos.fcosv2 import compute_locations, compute_locations_per_level, \
+    compute_centerness_targets, permute_and_concat
+from slender_det.modeling.meta_arch.fcos.fcosv2 import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, \
+    permute_to_N_HW_K
+from slender_det.layers import Scale, iou_loss, DFConv2d
+
+__all__ = ["FCOSRetinaNet", "FCOSRetinaNetHead"]
+
 
 @META_ARCH_REGISTRY.register()
 class FCOSRetinaNet(RetinaNet):
@@ -65,8 +69,7 @@ class FCOSRetinaNet(RetinaNet):
 
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
-        
-        
+
     def forward(self, batched_inputs):
         """
         Args:
@@ -107,8 +110,7 @@ class FCOSRetinaNet(RetinaNet):
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
-            
-    
+
     @torch.no_grad()
     def get_ground_truth(self, points, gt_instances):
         object_sizes_of_interest = [
@@ -132,7 +134,6 @@ class FCOSRetinaNet(RetinaNet):
             self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
         )
         return gt_classes, reg_targets
-
 
     def losses(self, gt_classes, reg_targets, pred_class_logits, pred_box_reg, pred_center_score):
         pred_class_logits, pred_box_reg, pred_center_score = \
@@ -179,7 +180,6 @@ class FCOSRetinaNet(RetinaNet):
             centerness_loss = pred_center_score[foreground_idxs].sum()
 
         return dict(cls_loss=cls_loss, reg_loss=reg_loss, centerness_loss=centerness_loss)
-        
 
     def inference(self, locations, box_cls, box_reg, ctr_sco, image_sizes):
         results = []
@@ -258,7 +258,6 @@ class FCOSRetinaNet(RetinaNet):
 
         return result
 
-
     def postprocess(self, instances, batched_inputs, image_sizes):
         """
             Rescale the output instances to the target size.
@@ -274,8 +273,8 @@ class FCOSRetinaNet(RetinaNet):
             processed_results.append({"instances": r})
 
         return processed_results
-        
-        
+
+
 class FCOSRetinaNetHead(nn.Module):
 
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
@@ -287,9 +286,9 @@ class FCOSRetinaNetHead(nn.Module):
         # TODO: Implement the sigmoid version first.
         # fmt: off
         in_channels = input_shape[0].channels
-        num_classes = cfg.MODEL.FCOS.NUM_CLASSES #80
-        self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES #[8, 16, 32, 64, 128]
-        #all false, no dcn conv, use nn.Conv2d
+        num_classes = cfg.MODEL.FCOS.NUM_CLASSES  # 80
+        self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES  # [8, 16, 32, 64, 128]
+        # all false, no dcn conv, use nn.Conv2d
         self.norm_reg_targets = cfg.MODEL.FCOS.NORM_REG_TARGETS
         self.centerness_on_reg = cfg.MODEL.FCOS.CENTERNESS_ON_REG
         self.use_dcn_in_tower = cfg.MODEL.FCOS.USE_DCN_IN_TOWER

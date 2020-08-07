@@ -2,9 +2,10 @@ import math
 import numpy as np
 from typing import List
 import torch
-from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from torch import nn
+import torch.distributed as dist
 from torch.nn import functional as F
+from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 
 from detectron2.data.detection_utils import convert_image_to_rgb
 from detectron2.layers import ShapeSpec, batched_nms, cat, DeformConv
@@ -19,13 +20,16 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_K
 
-from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
+from slender_det.modeling.meta_arch.reppoints import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from slender_det.modeling.meta_arch.fcosv2 import compute_locations, compute_locations_per_level, compute_centerness_targets
-from slender_det.modeling.meta_arch.fcosv2 import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, permute_to_N_HW_K
-import torch.distributed as dist
-from ...layers import Scale, iou_loss, DFConv2d
-__all__ = ["FCOSNCRetinaNet","FCOSNCRetinaNetHead"]
+from slender_det.modeling.meta_arch.fcos.fcosv2 import compute_locations, compute_locations_per_level, \
+    compute_centerness_targets
+from slender_det.modeling.meta_arch.fcos.fcosv2 import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, \
+    permute_to_N_HW_K
+from slender_det.layers import Scale, iou_loss, DFConv2d
+
+__all__ = ["FCOSNCRetinaNet", "FCOSNCRetinaNetHead"]
+
 
 def permute_and_concat(box_cls, box_reg, num_classes=80):
     """
@@ -47,6 +51,8 @@ def permute_and_concat(box_cls, box_reg, num_classes=80):
     box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
 
     return box_cls, box_reg
+
+
 @META_ARCH_REGISTRY.register()
 class FCOSNCRetinaNet(RetinaNet):
     """
@@ -85,10 +91,10 @@ class FCOSNCRetinaNet(RetinaNet):
 
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
-        
+
         self.loss_normalizer = 100  # initialize with any reasonable #fg that's not too small
         self.loss_normalizer_momentum = 0.9
-        
+
     def forward(self, batched_inputs):
         """
         Args:
@@ -129,8 +135,7 @@ class FCOSNCRetinaNet(RetinaNet):
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
-            
-    
+
     @torch.no_grad()
     def get_ground_truth(self, points, gt_instances):
         object_sizes_of_interest = [
@@ -155,7 +160,6 @@ class FCOSNCRetinaNet(RetinaNet):
         )
         return gt_classes, reg_targets
 
-
     def losses(self, gt_classes, reg_targets, pred_class_logits, pred_box_reg):
         pred_class_logits, pred_box_reg = \
             permute_and_concat(pred_class_logits, pred_box_reg, self.num_classes)
@@ -174,10 +178,10 @@ class FCOSNCRetinaNet(RetinaNet):
 
         gt_classes_target = torch.zeros_like(pred_class_logits)
         gt_classes_target[foreground_idxs, gt_classes[foreground_idxs]] = 1
-        
+
         self.loss_normalizer = (
-            self.loss_normalizer_momentum * self.loss_normalizer
-            + (1 - self.loss_normalizer_momentum) * total_num_pos
+                self.loss_normalizer_momentum * self.loss_normalizer
+                + (1 - self.loss_normalizer_momentum) * total_num_pos
         )
         # logits loss
         cls_loss = sigmoid_focal_loss_jit(
@@ -185,32 +189,31 @@ class FCOSNCRetinaNet(RetinaNet):
             alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, reduction="sum",
         ) / num_pos_avg_per_gpu
         if pos_inds.numel() > 0:
-#            reg_loss = smooth_l1_loss(
-#                pred_box_reg[foreground_idxs], reg_targets[foreground_idxs],
-#                0.11, reduction='sum') / num_pos_avg_per_gpu / max(1, self.loss_normalizer)
+            #            reg_loss = smooth_l1_loss(
+            #                pred_box_reg[foreground_idxs], reg_targets[foreground_idxs],
+            #                0.11, reduction='sum') / num_pos_avg_per_gpu / max(1, self.loss_normalizer)
 
-#            gt_center_score = compute_centerness_targets(reg_targets[foreground_idxs])
-#            # average sum_centerness_targets from all gpus,
-#            # which is used to normalize centerness-weighed reg loss
-#            sum_centerness_targets_avg_per_gpu = \
-#                reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
+            #            gt_center_score = compute_centerness_targets(reg_targets[foreground_idxs])
+            #            # average sum_centerness_targets from all gpus,
+            #            # which is used to normalize centerness-weighed reg loss
+            #            sum_centerness_targets_avg_per_gpu = \
+            #                reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
 
             reg_loss = iou_loss(
                 pred_box_reg[foreground_idxs], reg_targets[foreground_idxs],
                 loss_type=self.iou_loss_type
-            ) / num_pos_avg_per_gpu 
+            ) / num_pos_avg_per_gpu
 
-#            centerness_loss = F.binary_cross_entropy_with_logits(
-#                pred_center_score[foreground_idxs], gt_center_score, reduction='sum'
-#            ) / num_pos_avg_per_gpu
+        #            centerness_loss = F.binary_cross_entropy_with_logits(
+        #                pred_center_score[foreground_idxs], gt_center_score, reduction='sum'
+        #            ) / num_pos_avg_per_gpu
         else:
             reg_loss = pred_box_reg[foreground_idxs].sum()
             reduce_sum(pred_center_score[foreground_idxs].new_tensor([0.0]))
-            #centerness_loss = pred_center_score[foreground_idxs].sum()
+            # centerness_loss = pred_center_score[foreground_idxs].sum()
 
         return dict(cls_loss=cls_loss, reg_loss=reg_loss)
-        
-        
+
     def inference(self, locations, box_cls, box_reg, image_sizes):
         results = []
 
@@ -239,7 +242,6 @@ class FCOSNCRetinaNet(RetinaNet):
             # (HxW, C)
             box_cls_i = box_cls_i.sigmoid_()
             keep_idxs = box_cls_i > self.pre_nms_thresh
-
 
             box_cls_i = box_cls_i[keep_idxs]
             keep_idxs_nonzero_i = keep_idxs.nonzero()
@@ -284,7 +286,6 @@ class FCOSNCRetinaNet(RetinaNet):
 
         return result
 
-
     def postprocess(self, instances, batched_inputs, image_sizes):
         """
             Rescale the output instances to the target size.
@@ -300,8 +301,8 @@ class FCOSNCRetinaNet(RetinaNet):
             processed_results.append({"instances": r})
 
         return processed_results
-        
-        
+
+
 class FCOSNCRetinaNetHead(nn.Module):
 
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
@@ -313,9 +314,9 @@ class FCOSNCRetinaNetHead(nn.Module):
         # TODO: Implement the sigmoid version first.
         # fmt: off
         in_channels = input_shape[0].channels
-        num_classes = cfg.MODEL.FCOS.NUM_CLASSES #80
-        self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES #[8, 16, 32, 64, 128]
-        #all false, no dcn conv, use nn.Conv2d
+        num_classes = cfg.MODEL.FCOS.NUM_CLASSES  # 80
+        self.fpn_strides = cfg.MODEL.FCOS.FPN_STRIDES  # [8, 16, 32, 64, 128]
+        # all false, no dcn conv, use nn.Conv2d
         self.norm_reg_targets = cfg.MODEL.FCOS.NORM_REG_TARGETS
         self.centerness_on_reg = cfg.MODEL.FCOS.CENTERNESS_ON_REG
         self.use_dcn_in_tower = cfg.MODEL.FCOS.USE_DCN_IN_TOWER
@@ -369,7 +370,7 @@ class FCOSNCRetinaNetHead(nn.Module):
         self.add_module('bbox_tower', nn.Sequential(*bbox_tower))
         self.cls_logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
         self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
-        #self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
+        # self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
 
         # initialization
         for modules in [self.cls_tower, self.bbox_tower,
@@ -389,16 +390,16 @@ class FCOSNCRetinaNetHead(nn.Module):
     def forward(self, x):
         logits = []
         bbox_reg = []
-        #centerness = []
+        # centerness = []
         for l, feature in enumerate(x):
             cls_tower = self.cls_tower(feature)
             box_tower = self.bbox_tower(feature)
 
             logits.append(self.cls_logits(cls_tower))
-#            if self.centerness_on_reg:
-#                centerness.append(self.centerness(box_tower))
-#            else:
-#                centerness.append(self.centerness(cls_tower))
+            #            if self.centerness_on_reg:
+            #                centerness.append(self.centerness(box_tower))
+            #            else:
+            #                centerness.append(self.centerness(cls_tower))
 
             bbox_pred = self.scales[l](self.bbox_pred(box_tower))
             if self.norm_reg_targets:
@@ -409,5 +410,5 @@ class FCOSNCRetinaNetHead(nn.Module):
                     bbox_reg.append(bbox_pred * self.fpn_strides[l])
             else:
                 bbox_reg.append(torch.exp(bbox_pred))
-        #return logits, bbox_reg, centerness
+        # return logits, bbox_reg, centerness
         return logits, bbox_reg

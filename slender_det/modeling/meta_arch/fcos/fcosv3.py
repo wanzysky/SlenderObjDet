@@ -2,6 +2,13 @@ import os
 import math
 from typing import List
 
+import numpy as np
+from concern.smart_path import smart_path
+from os.path import exists
+from os import mknod
+import cv2
+from PIL import Image, ImageDraw
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -13,18 +20,13 @@ from detectron2.structures import ImageList, Instances, Boxes
 from detectron2.layers import ShapeSpec, batched_nms, cat
 from detectron2.modeling.postprocessing import detector_postprocess
 
-from ..backbone import build_backbone
-from ...layers import Scale, iou_loss, DFConv2d
-from slender_det.modeling.meta_arch.fcosv2 import FCOSHead
+from slender_det.modeling.backbone import build_backbone
+from slender_det.layers import Scale, iou_loss, DFConv2d
+from .fcosv2 import FCOSHead
 
 INF = 100000000
 
-import numpy as np
-from concern.smart_path import smart_path
-from os.path import exists
-from os import mknod
-import cv2
-from PIL import Image, ImageDraw
+
 def save(rgb: np.ndarray, mask: np.ndarray, centers: np.ndarray, *file_names):
     assert len(file_names) > 0
     rgb_save_path = smart_path(os.path.join(file_names[0], file_names[1]))
@@ -36,19 +38,18 @@ def save(rgb: np.ndarray, mask: np.ndarray, centers: np.ndarray, *file_names):
 
     im_rgb = Image.fromarray(rgb)
     im_rgb.save(rgb_save_path)
-    
-        
+
     mask = cv2.applyColorMap(mask, 0)
-    
+
     im_mask = Image.fromarray(mask)
     draw = ImageDraw.Draw(im_mask)
     radis = 2
     for i in range(len(centers)):
-        draw.pieslice((centers[i,0]-radis,centers[i,1]-radis,centers[i,0]+radis,centers[i,1]+radis),start=0,end=360,fill=128)
+        draw.pieslice((centers[i, 0] - radis, centers[i, 1] - radis, centers[i, 0] + radis, centers[i, 1] + radis),
+                      start=0, end=360, fill=128)
     im_mask.save(mask_save_path)
-    
-    
-        
+
+
 def get_num_gpus():
     return int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
 
@@ -174,7 +175,7 @@ def get_sample_region(gt, strides, num_points_per, gt_xs, gt_ys, radius=1.0):
 
 
 def compute_targets_for_locations(
-        locations, targets, object_sizes_of_interest, 
+        locations, targets, object_sizes_of_interest,
         gt_center_masks, mask_thresh,
         strides, center_sampling_radius, num_classes, norm_reg_targets=False,
 ):
@@ -195,7 +196,7 @@ def compute_targets_for_locations(
         gt_classes_per_im = targets_per_im.gt_classes
         area = targets_per_im.gt_boxes.area()
         gt_center_mask_i = torch.from_numpy(gt_center_masks[im_i]).to(locations.device)
-        
+
         l = xs[:, None] - bboxes[:, 0][None]
         t = ys[:, None] - bboxes[:, 1][None]
         r = bboxes[:, 2][None] - xs[:, None]
@@ -225,10 +226,10 @@ def compute_targets_for_locations(
         gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
         # NOTE: set background labels to NUM_CLASSES not 0
         gt_classes_per_im[locations_to_min_area == INF] = num_classes
-        
-        #set background labels to where gt_center_mask < thresh
-        in_boxes_ids = (locations_to_min_area != INF).nonzero()[:,0]
-        invalid_ids = gt_center_mask_i[locations[in_boxes_ids,1],locations[in_boxes_ids,0]] <= mask_thresh
+
+        # set background labels to where gt_center_mask < thresh
+        in_boxes_ids = (locations_to_min_area != INF).nonzero()[:, 0]
+        invalid_ids = gt_center_mask_i[locations[in_boxes_ids, 1], locations[in_boxes_ids, 0]] <= mask_thresh
         invalid_ids = in_boxes_ids[invalid_ids]
         gt_classes_per_im[invalid_ids] = num_classes
 
@@ -256,7 +257,7 @@ class FCOSV3(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        
+
         self.cfg = cfg
         self.in_features = cfg.MODEL.FCOS.IN_FEATURES
 
@@ -313,57 +314,60 @@ class FCOSV3(nn.Module):
             )
             gt_instances = [x["targets"].to(self.device) for x in batched_inputs]
         else:
-            gt_instances = None 
+            gt_instances = None
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
         box_cls, box_reg, ctr_sco = self.head(features)
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
         locations = compute_locations(shapes, self.fpn_strides, self.device)
-        
+
         if self.training:
             while (True):
                 standard = "gaussian"
                 sigma = 0.5
                 mask_thresh = 0.2
                 gt_center_masks = []
-                #compute center_score
+                # compute center_score
                 for im_i in range(len(gt_instances)):
                     gt_per_im = gt_instances[im_i]
                     gt_masks = gt_per_im.gt_masks
-                    #standard = 'linear' or 'gaussian', sigma used for gaussian distribution
-                    center_masks_i = gt_masks.center_masks(mask_size=gt_per_im.image_size, standard = standard, sigma = sigma)
+                    # standard = 'linear' or 'gaussian', sigma used for gaussian distribution
+                    center_masks_i = gt_masks.center_masks(mask_size=gt_per_im.image_size, standard=standard,
+                                                           sigma=sigma)
                     gt_center_masks.append(center_masks_i)
-                
-                #mask_thresh screen out locations in gt_boxes whose gt_center_score less than threshold
-                gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances, gt_center_masks, mask_thresh = mask_thresh)
-                
-                #computing gt_center_scores and visualization
+
+                # mask_thresh screen out locations in gt_boxes whose gt_center_score less than threshold
+                gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances, gt_center_masks,
+                                                                mask_thresh=mask_thresh)
+
+                # computing gt_center_scores and visualization
                 valid_ids = gt_classes != self.num_classes
                 gt_center_scores = []
                 cat_locations = torch.cat(locations, dim=0)
                 for im_i in range(len(gt_instances)):
                     valid_id = valid_ids[im_i].nonzero().view(-1)
                     valid_locations = cat_locations[valid_id].long()
-                    centers= gt_center_masks[im_i]
+                    centers = gt_center_masks[im_i]
                     import ipdb
                     ipdb.set_trace()
-                    rgb_i = batched_inputs[im_i]['image'].permute(1,2,0).numpy().astype(np.uint8)
-                    save(rgb_i,(centers*255).astype(np.uint8),valid_locations.cpu().numpy(),'./train_log/center_masks','rgb'+str(im_i)+'.png','gaussian_sigma2'+str(im_i)+'.png')
+                    rgb_i = batched_inputs[im_i]['image'].permute(1, 2, 0).numpy().astype(np.uint8)
+                    save(rgb_i, (centers * 255).astype(np.uint8), valid_locations.cpu().numpy(),
+                         './train_log/center_masks', 'rgb' + str(im_i) + '.png', 'gaussian_sigma2' + str(im_i) + '.png')
                     centers = torch.Tensor(centers).to(self.device)
-                    gt_center_score = centers[valid_locations[:,1],valid_locations[:,0]]#valid_location:xy, centers:[h,w]
+                    gt_center_score = centers[
+                        valid_locations[:, 1], valid_locations[:, 0]]  # valid_location:xy, centers:[h,w]
                     gt_center_scores.append(gt_center_score)
-                gt_center_scores = torch.cat(gt_center_scores,dim=0)
+                gt_center_scores = torch.cat(gt_center_scores, dim=0)
             losses = self.losses(gt_classes, reg_targets, box_cls, box_reg, ctr_sco, gt_center_scores)
-            
+
             return losses
         else:
             results = self.inference(locations, box_cls, box_reg, ctr_sco, images.image_sizes)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
-            
-    
+
     def losses(self, gt_classes, reg_targets, pred_class_logits, pred_box_reg, pred_center_score, gt_center_score):
         pred_class_logits, pred_box_reg, pred_center_score = \
             permute_and_concat(pred_class_logits, pred_box_reg, pred_center_score, self.num_classes)
@@ -389,8 +393,8 @@ class FCOSV3(nn.Module):
             alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, reduction="sum",
         ) / num_pos_avg_per_gpu
         if pos_inds.numel() > 0:
-            #gt_center_score = compute_centerness_targets(reg_targets[foreground_idxs])
-            
+            # gt_center_score = compute_centerness_targets(reg_targets[foreground_idxs])
+
             # average sum_centerness_targets from all gpus,
             # which is used to normalize centerness-weighed reg loss
             sum_centerness_targets_avg_per_gpu = \
@@ -537,4 +541,3 @@ class FCOSV3(nn.Module):
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         return images
-

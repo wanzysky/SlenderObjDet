@@ -25,7 +25,7 @@ from detectron2.modeling.postprocessing import detector_postprocess
 
 import concern.webcv2 as webcv2
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from ...layers import Scale, iou_loss, DFConv2d, box_iou_loss
+from slender_det.layers import Scale, iou_loss, DFConv2d, box_iou_loss
 
 
 INF = 100000000

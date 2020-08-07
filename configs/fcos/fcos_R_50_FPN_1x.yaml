@@ -1,5 +1,6 @@
 _BASE_: "Base-Fcos.yaml"
 MODEL:
+  META_ARCHITECTURE: "FCOSV2"
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   RESNETS:
     DEPTH: 50
@@ -12,3 +13,6 @@ MODEL:
 
 INPUT:
   MIN_SIZE_TRAIN: (800,)
+
+TEST:
+  EVAL_PERIOD: 10000

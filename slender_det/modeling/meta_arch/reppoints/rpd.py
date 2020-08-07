@@ -4,13 +4,12 @@ Complete implementation of RepPoints detector (https://arxiv.org/pdf/1904.11490)
 """
 from typing import List
 import time
-
 import cv2
+import numpy as np
+
 import torch
 from torch import nn
-import numpy as np
 from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
-from torch import nn
 
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY, RetinaNet
 from detectron2.modeling.backbone import build_backbone
@@ -180,12 +179,12 @@ class RepPointsDetector(nn.Module):
 
         bias_init = float(-np.log((1 - 0.01) / 0.01))
         for modules in [
-                self.cls_conv,
-                self.reg_conv,
-                self.offsets_init,
-                self.offsets_refine,
-                self.deform_cls_conv,
-                self.deform_reg_conv]:
+            self.cls_conv,
+            self.reg_conv,
+            self.offsets_init,
+            self.offsets_refine,
+            self.deform_cls_conv,
+            self.deform_reg_conv]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
                     torch.nn.init.normal_(layer.weight, mean=0, std=0.01)
@@ -226,11 +225,11 @@ class RepPointsDetector(nn.Module):
             stride = self.strides[f_i]
             # HxW, 2
             grid = self.grid[:height, :width].reshape(-1, 2)
-            strides.append(torch.full((grid.shape[0], ), stride, device=grid.device))
+            strides.append(torch.full((grid.shape[0],), stride, device=grid.device))
             point_centers.append(grid * stride)
         return point_centers, strides
 
-    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1,1,1,1,1]):
+    def points2bbox(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1, 1, 1, 1, 1]):
         '''
             Args:
                 base_grids: List[[H*W,2]] coordinate of each feature map
@@ -250,9 +249,9 @@ class RepPointsDetector(nn.Module):
             base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
 
             # (N*C/2, 2, H_i, W_i)
-            delta = delta.view(-1, C//2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+            delta = delta.view(-1, C // 2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
             # (N, C/2, 2, H_i, W_i)
-            points = (delta * point_strides[i] + base_grid).view(-1, C//2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).view(-1, C // 2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
             bbox_left = pts_x.min(dim=1, keepdim=True)[0]
@@ -320,10 +319,10 @@ class RepPointsDetector(nn.Module):
             cls_labels.append(cls_label)
             refine_bbox_labels.append(refine_bbox_label.tensor)
 
-        return torch.stack(init_objectness_labels),\
-            torch.stack(init_bbox_labels),\
-            torch.stack(cls_labels),\
-            torch.stack(refine_bbox_labels)
+        return torch.stack(init_objectness_labels), \
+               torch.stack(init_bbox_labels), \
+               torch.stack(cls_labels), \
+               torch.stack(refine_bbox_labels)
 
     def losses(
             self,
@@ -364,8 +363,8 @@ class RepPointsDetector(nn.Module):
         gt_cls_target[foreground_idxs, gt_cls[foreground_idxs]] = 1
 
         self.loss_normalizer = (
-            self.loss_normalizer_momentum * self.loss_normalizer
-            + (1 - self.loss_normalizer_momentum) * num_foreground
+                self.loss_normalizer_momentum * self.loss_normalizer
+                + (1 - self.loss_normalizer_momentum) * num_foreground
         )
 
         loss_cls = sigmoid_focal_loss_jit(
@@ -553,7 +552,7 @@ class RepPointsDetector(nn.Module):
             webcv2.imshow('pred', vis_img)
             webcv2.waitKey()
         '''
-        
+
     def offset_to_pts(self, center_list, pred_list):
         """Change from point offset to point coordinate.
             Args:
@@ -563,20 +562,20 @@ class RepPointsDetector(nn.Module):
                 pts_list: List[[N,C,H,W]] C=4 or 18
                 
         """
-        #important!
-        #in rpd, the coordinates of prediction points is xy form , original is yx form!
+        # important!
+        # in rpd, the coordinates of prediction points is xy form , original is yx form!
         pts_list = []
         for i_lvl in range(len(self.point_strides)):
             pts_shift = pred_list[i_lvl]
-            N,C,H,W = pts_shift.shape
-            #[H*W,2]->[N,H*W,C]
+            N, C, H, W = pts_shift.shape
+            # [H*W,2]->[N,H*W,C]
             pts_center = center_list[i_lvl][:, :2].repeat(
                 N, 1, self.num_points)
-            #[N,C,H,W]->[N,H,W,C]->[N,H*W,C]
+            # [N,C,H,W]->[N,H,W,C]->[N,H*W,C]
             xy_pts_shift = pts_shift.permute(0, 2, 3, 1).view(
                 N, -1, 2 * self.num_points)
             pts_lvl = xy_pts_shift * self.point_strides[i_lvl] + pts_center
-            pts_list.append(pts_lvl.permute(0, 2, 1).view(N,C,H,W))
+            pts_list.append(pts_lvl.permute(0, 2, 1).view(N, C, H, W))
         return pts_list
 
     def forward(self, batched_inputs):
@@ -614,8 +613,8 @@ class RepPointsDetector(nn.Module):
         logits = []
         offsets_refine = []
         for i in range(len(cls_features)):
-            pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init[i].detach()\
-                + self.gradient_mul * offsets_init[i]
+            pts_out_init_grad_mul = (1 - self.gradient_mul) * offsets_init[i].detach() \
+                                    + self.gradient_mul * offsets_init[i]
             # N, 18, H, W --> N, 9, 2(x, y), H, W --> N, 9, 2(y, x), H, W
             # BUGGY: assuming self.num_points == 9
             pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
@@ -636,14 +635,14 @@ class RepPointsDetector(nn.Module):
 
         point_centers, strides = self.get_center_grid(features)
 
-        init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
-        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
+        init_boxes = self.points2bbox(point_centers, offsets_init, [1, 2, 4, 8, 16])
+        refine_boxes = self.points2bbox(point_centers, offsets_refine, [1, 2, 4, 8, 16])
 
         point_centers = torch.cat(point_centers, 0)
         strides = torch.cat(strides, 0)
 
         if self.training:
-            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets =\
+            gt_init_objectness, gt_init_offsets, gt_cls, gt_refine_offsets = \
                 self.get_ground_truth(point_centers, strides,
                                       flat_and_concate_levels(init_boxes), gt_instances)
 
@@ -683,7 +682,7 @@ class RepPointsDetector(nn.Module):
 
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
-                results, batched_inputs, images.image_sizes
+                    results, batched_inputs, images.image_sizes
             ):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])

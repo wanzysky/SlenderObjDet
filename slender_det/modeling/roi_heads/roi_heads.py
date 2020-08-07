@@ -22,8 +22,8 @@ from detectron2.modeling.roi_heads.keypoint_head import build_keypoint_head
 from detectron2.modeling.roi_heads.mask_head import build_mask_head
 
 from detectron2.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY, StandardROIHeads
-from slender_det.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayersWithAnchor
-from slender_det.modeling.meta_arch.pvrcnn import ProposalVisibleHead
+from .fast_rcnn import FastRCNNOutputLayersWithAnchor
+from slender_det.modeling.meta_arch.rcnn.pvrcnn import ProposalVisibleHead
 
 
 @ROI_HEADS_REGISTRY.register()

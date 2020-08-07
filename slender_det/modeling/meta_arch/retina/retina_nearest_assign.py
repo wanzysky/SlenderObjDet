@@ -22,12 +22,14 @@ from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_
 from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
 from slender_det.modeling.matchers.rep_matcher import rep_points_match_with_classes
+
 __all__ = ["NearestRetinaNet"]
+
 
 @META_ARCH_REGISTRY.register()
 class NearestRetinaNet(RetinaNet):
 
-    #using centerness assign
+    # using centerness assign
     @torch.no_grad()
     def label_anchors(self, anchors, gt_instances):
         """
@@ -48,27 +50,27 @@ class NearestRetinaNet(RetinaNet):
                 feature maps. The values are the matched gt boxes for each anchor.
                 Values are undefined for those anchors not labeled as foreground.
         """
-        
-        #generate strides: [R]
-        strides=[]
+
+        # generate strides: [R]
+        strides = []
         backbone_shape = self.backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
         for i in range(len(feature_shapes)):
             stride = feature_shapes[i].stride
             anchor_num_i = anchors[i].tensor.shape[0]
-            stride = torch.full((anchor_num_i, ), stride, device=anchors[i].tensor.device)
+            stride = torch.full((anchor_num_i,), stride, device=anchors[i].tensor.device)
             strides.append(stride)
         anchors = Boxes.cat(anchors).tensor
-        centers = torch.stack(((anchors[:,0]+ anchors[:,2])//2,(anchors[:,1]+ anchors[:,3])//2), dim = 1)
-        strides = torch.cat(strides,0)
-        
+        centers = torch.stack(((anchors[:, 0] + anchors[:, 2]) // 2, (anchors[:, 1] + anchors[:, 3]) // 2), dim=1)
+        strides = torch.cat(strides, 0)
+
         gt_labels = []
         matched_gt_boxes = []
         for gt_per_image in gt_instances:
             image_size = gt_per_image.image_size
             centers_invalid = (centers[:, 0] >= image_size[1]).logical_or(
                 centers[:, 1] >= image_size[0])
-                
+
             objectness_label_i, bbox_label_i = rep_points_match(
                 centers, strides, gt_per_image.gt_boxes, gt_per_image.gt_classes)
             objectness_label_i[centers_invalid] = -1

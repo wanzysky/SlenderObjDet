@@ -5,5 +5,6 @@ from .pnwm import ProposalNetworkWithMasks
 from .retina import *
 from .fcos import *
 from .rcnn import *
+from .reppoints import *
 
 from .corner_net import CornerNet
