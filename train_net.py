@@ -28,7 +28,6 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
-    COCOEvaluator,
     COCOPanopticEvaluator,
     DatasetEvaluators,
     LVISEvaluator,
@@ -42,6 +41,7 @@ from slender_det.modeling import build_model
 from slender_det.data import BorderMaskMapper
 from slender_det.config import get_cfg
 from slender_det.evaluation.coco_evaluation_with_anchors import COCOEvaluatorWithAnchors
+from slender_det.evaluation import COCOEvaluator
 
 
 class Trainer(DefaultTrainer):

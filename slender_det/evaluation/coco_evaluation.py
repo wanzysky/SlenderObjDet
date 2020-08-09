@@ -102,7 +102,7 @@ class COCOEvaluator(Base):
             self._eval_box_proposals(predictions)
         if "instances" in predictions[0]:
             self._eval_predictions(set(self._tasks), predictions)
-            # self._evaluate_predictions_ar(predictions)
+            self._evaluate_predictions_ar(predictions)
         # Copy so the caller can do whatever with results
         return copy.deepcopy(self._results)
 
