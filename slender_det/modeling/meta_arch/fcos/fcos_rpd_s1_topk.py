@@ -18,7 +18,7 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from slender_det.modeling.backbone import build_backbone
 from slender_det.layers import Scale, iou_loss, DFConv2d
 
-from .utils import INF, reduce_sum, permute_to_N_HW_K, permute_and_concat, \
+from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, permute_and_concat, \
     compute_locations_per_level, compute_locations, get_sample_region, \
     compute_targets_for_locations, compute_centerness_targets
 
