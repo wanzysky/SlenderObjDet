@@ -1,0 +1,14 @@
+_BASE_: "Base-Fcos.yaml"
+MODEL:
+  META_ARCHITECTURE: "FCOSRepPoints"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  FCOS:
+    USE_DCN_V2: False
+  MASK_ON: False
+SOLVER:
+  IMS_PER_BATCH: 16
+  
+#OUTPUT_DIR: ./train_log/0809_FCOS_rpd_softmax_normalized_centerness_per_box_only_reg_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0810_FCOS_rpd_R_50_FPN_1x

@@ -1,13 +1,6 @@
 from detectron2.modeling.meta_arch import build_model
 
 from .pnwm import ProposalNetworkWithMasks
-
-from .retina import *
-from .fcos import *
-from .rcnn import *
-from .reppoints import *
-
-from .corner_net import CornerNet
 from .pvrcnn import ProposalVisibleRCNN
 from .fcos import FCOS
 from .fcosv2 import FCOSV2
@@ -25,3 +18,13 @@ from .retina_centerness_assign import CenternessRetinaNet
 from .fcosv3 import FCOSV3
 from .rpd_centerness import RepPointsCenterness
 from .corner_net import CornerNet
+
+from .fcos_rpd import FCOSRepPoints
+#from .fcos_dcn import FCOSRepPoints
+#from .fcos_rpd_exp import FCOSRepPoints
+#from .fcos_rpd_topk_per_box import FCOSRepPoints
+#from .fcos_rpd_less_center import FCOSRepPoints
+#from .fcos_rpd_dcnv2 import FCOSRepPoints
+#from .fcos_rpd_conv_points import FCOSRepPoints
+#from .fcos_rpd_mask_assign import FCOSRepPoints
+#from .fcos_rpd_normalized_centerness import FCOSRepPoints
