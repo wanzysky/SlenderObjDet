@@ -480,7 +480,7 @@ class RepPointsCenterness(nn.Module):
 
         loss_localization_init = box_iou_loss(
             pred_init_boxes[init_foreground_idxs], gt_init_bboxes[init_foreground_idxs], gt_center_score,
-            loss_type=self.iou_loss_type
+            loss_type='giou'
         ) / max(1, num_init_foreground)
 
 #        loss_localization_refine = box_iou_loss(
@@ -808,7 +808,7 @@ class RepPointsCenterness(nn.Module):
                 point_centers,
                 flat_and_concate_levels(logits),
                 flat_and_concate_levels(refine_boxes))
-            results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
+            results = self.inference(logits, init_boxes, refine_boxes, centerness, images.image_sizes)
             self.visualize_training(batched_inputs, results)
 
             processed_results = []

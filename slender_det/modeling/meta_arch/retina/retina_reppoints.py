@@ -326,7 +326,7 @@ class ReppointsRetinaNet(nn.Module):
         """
 
         bboxes = []
-        use_2points = True
+        use_2points = False
         # For each level
         for i in range(len(deltas)):
             """

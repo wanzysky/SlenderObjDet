@@ -19,4 +19,4 @@ SOLVER:
   IMS_PER_BATCH: 16
 
 #OUTPUT_DIR: ./train_log/0722_rep_points_nearest_centerness_iouloss_R_50_FPN_1x
-OUTPUT_DIR: ./train_log/0730_rep_points_fcos_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0731_rep_points_fcos_R_50_FPN_1x
