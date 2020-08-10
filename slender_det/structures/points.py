@@ -38,8 +38,8 @@ def stride_match(strides: torch.Tensor, boxes: Boxes, maximum=64):
     box_wh = boxes[:, 2:] - boxes[:, :2]
     box_strides = torch.pow(
         2,
-        ((torch.log2(box_wh[:, 0]) +\
-            torch.log2(box_wh[:, 1])) / 2).int(),
+        ((torch.log2(box_wh[:, 0]) + \
+          torch.log2(box_wh[:, 1])) / 2).int(),
     ).clamp(strides.min(), strides.max())
     matched_matrix = torch.eq(strides[:, None], box_strides[None])
     return matched_matrix
