@@ -2,6 +2,7 @@ import os
 
 import torch
 import torch.distributed as dist
+from detectron2.layers import cat
 
 INF = 100000000
 

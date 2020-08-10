@@ -218,7 +218,7 @@ class FCOSRepPoints(nn.Module):
 
         init_gt_classes, init_reg_targets = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
-            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
+            self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
 
         centers = torch.cat(points, 0)  # [X,2]
@@ -256,29 +256,6 @@ class FCOSRepPoints(nn.Module):
 
         return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets
 
-    #    @torch.no_grad()
-    #    def get_ground_truth(self, points, gt_instances):
-    #        object_sizes_of_interest = [
-    #            [-1, 64],
-    #            [64, 128],
-    #            [128, 256],
-    #            [256, 512],
-    #            [512, INF],
-    #        ]
-    #        expanded_object_sizes_of_interest = []
-    #        for l, points_per_level in enumerate(points):
-    #            object_sizes_of_interest_per_level = \
-    #                points_per_level.new_tensor(object_sizes_of_interest[l])
-    #            expanded_object_sizes_of_interest.append(
-    #                object_sizes_of_interest_per_level[None].expand(len(points_per_level), -1)
-    #            )
-    #        expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
-    #
-    #        gt_classes, reg_targets = compute_targets_for_locations(
-    #            points, gt_instances, expanded_object_sizes_of_interest,
-    #            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
-    #        )
-    #        return gt_classes, reg_targets
 
     def inference(self, locations, box_cls, box_reg, ctr_sco, image_sizes):
         results = []

@@ -301,7 +301,7 @@ class FCOSRepPoints(nn.Module):
         init_gt_classes, init_reg_targets = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
             gt_center_masks, mask_thresh,
-            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
+            self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
 
         # computing gt_center_scores and visualization

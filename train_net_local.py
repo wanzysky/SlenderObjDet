@@ -50,7 +50,18 @@ class Trainer(DefaultTrainer):
     "SimpleTrainer", or write your own training loop. You can use
     "tools/plain_train_net.py" as an example.
     """
+    
+    @classmethod
+    def build_train_loader(cls, cfg):
+        """
+        Returns:
+            iterable
 
+        It now calls :func:`detectron2.data.build_detection_train_loader`.
+        Overwrite it if you'd like a different data loader.
+        """
+        return build_detection_train_loader(cfg, mapper=BorderMaskMapper(cfg))
+        
     @classmethod
     def build_model(cls, cfg):
         """
