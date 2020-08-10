@@ -18,9 +18,90 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from slender_det.modeling.backbone import build_backbone
 from slender_det.layers import Scale, iou_loss, DFConv2d
 
-from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, permute_and_concat, \
+from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
     compute_locations_per_level, compute_locations, get_sample_region, \
-    compute_targets_for_locations, compute_centerness_targets
+    compute_centerness_targets
+from .utils import permute_and_concat_v2 as permute_and_concat
+
+
+def compute_targets_for_locations(
+        locations, targets, object_sizes_of_interest,
+        strides, center_sampling_radius, num_classes, norm_reg_targets=False
+):
+    num_points = [len(_) for _ in locations]
+    # build normalization weights before cat locations
+    norm_weights = None
+    if norm_reg_targets:
+        norm_weights = torch.cat([torch.empty(n).fill_(s) for n, s in zip(num_points, strides)])
+
+    locations = torch.cat(locations, dim=0)
+    xs, ys = locations[:, 0], locations[:, 1]
+
+    gt_classes = []
+    reg_targets = []
+    topk_per_bbox = 1
+    topk_locations = []
+    for im_i in range(len(targets)):
+        targets_per_im = targets[im_i]
+        bboxes = targets_per_im.gt_boxes.tensor
+        gt_classes_per_im = targets_per_im.gt_classes
+        area = targets_per_im.gt_boxes.area()
+
+        l = xs[:, None] - bboxes[:, 0][None]
+        t = ys[:, None] - bboxes[:, 1][None]
+        r = bboxes[:, 2][None] - xs[:, None]
+        b = bboxes[:, 3][None] - ys[:, None]
+        reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
+
+        if center_sampling_radius > 0:
+            is_in_boxes = get_sample_region(bboxes, strides, num_points, xs, ys, radius=center_sampling_radius)
+        else:
+            # no center sampling, it will use all the locations within a ground-truth box
+            is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+
+        max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
+        # limit the regression range for each location
+        is_cared_in_the_level = \
+            (max_reg_targets_per_im >= object_sizes_of_interest[:, [0]]) & \
+            (max_reg_targets_per_im <= object_sizes_of_interest[:, [1]])
+
+        locations_to_gt_area = area[None].repeat(len(locations), 1)
+        locations_to_gt_area[is_in_boxes == 0] = INF
+        locations_to_gt_area[is_cared_in_the_level == 0] = INF
+
+        # if there are still more than one objects for a location,
+        # we choose the one with minimal area
+        locations_to_min_area, locations_to_gt_inds = locations_to_gt_area.min(dim=1)
+
+        gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
+        # NOTE: set background labels to NUM_CLASSES not 0
+        gt_classes_per_im[locations_to_min_area == INF] = num_classes
+
+        fore_ground_inds = (gt_classes_per_im >= 0) & (gt_classes_per_im != num_classes)
+        topk_locations_i = torch.zeros(len(locations_to_gt_inds), device=reg_targets_per_im.device).bool()
+        for gt_inds_i in range(len(bboxes)):
+            locations_for_gt_inds_i = (locations_to_gt_inds == gt_inds_i)
+            locations_for_gt_inds_i = locations_for_gt_inds_i & fore_ground_inds
+            pos_num_for_gt_inds_i = locations_for_gt_inds_i.sum().item()
+            if pos_num_for_gt_inds_i > topk_per_bbox:
+                reg_targets_for_gt_inds_i = reg_targets_per_im[locations_for_gt_inds_i, gt_inds_i]
+                center_score_for_gt_inds_i = compute_centerness_targets(reg_targets_for_gt_inds_i)
+                topk_score_for_gt_inds_i, inds = torch.topk(center_score_for_gt_inds_i, topk_per_bbox, sorted=False)
+                pos_topk_location_inds = locations_for_gt_inds_i.nonzero()[inds]
+                topk_locations_i[pos_topk_location_inds] = True
+            elif pos_num_for_gt_inds_i > 0:
+                topk_locations_i[locations_for_gt_inds_i.nonzero()] = True
+        topk_locations.append(topk_locations_i)
+
+        # calculate regression targets in 'fcos' type
+        reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+        if norm_reg_targets and norm_weights is not None:
+            reg_targets_per_im /= norm_weights[:, None]
+
+        gt_classes.append(gt_classes_per_im)
+        reg_targets.append(reg_targets_per_im)
+
+    return torch.stack(gt_classes), torch.stack(reg_targets), torch.stack(topk_locations)
 
 
 @META_ARCH_REGISTRY.register()

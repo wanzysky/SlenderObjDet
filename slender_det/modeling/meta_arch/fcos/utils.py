@@ -52,6 +52,32 @@ def permute_and_concat(box_cls, box_reg, center_score, num_classes=80):
     return box_cls, box_reg, center_score
 
 
+def permute_and_concat_v2(box_cls, box_reg_init, box_reg, center_score, num_classes=80):
+    """
+    Rearrange the tensor layout from the network output, i.e.:
+    list[Tensor]: #lvl tensors of shape (N, A x K, Hi, Wi)
+    to per-image predictions, i.e.:
+    Tensor: of shape (N x sum(Hi x Wi x A), K)
+    """
+    # for each feature level, permute the outputs to make them be in the
+    # same format as the labels. Note that the labels are computed for
+    # all feature levels concatenated, so we keep the same representation
+    # for the objectness, the box_reg and the center-ness
+    box_cls_flattened = [permute_to_N_HW_K(x, num_classes) for x in box_cls]
+    box_reg_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg]
+    box_reg_init_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg_init]
+    center_score = [permute_to_N_HW_K(x, 1) for x in center_score]
+    # concatenate on the first dimension (representing the feature levels), to
+    # take into account the way the labels were generated (with all feature maps
+    # being concatenated as well)
+    box_cls = cat(box_cls_flattened, dim=1).view(-1, num_classes)
+    box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
+    box_reg_init = cat(box_reg_init_flattened, dim=1).view(-1, 4)
+    center_score = cat(center_score, dim=1).view(-1)
+
+    return box_cls, box_reg_init, box_reg, center_score
+
+
 def compute_locations_per_level(h, w, stride, device):
     shifts_x = torch.arange(
         0, w * stride, step=stride,
