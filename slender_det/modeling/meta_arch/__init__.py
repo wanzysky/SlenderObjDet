@@ -19,8 +19,8 @@ from .fcosv3 import FCOSV3
 from .rpd_centerness import RepPointsCenterness
 from .corner_net import CornerNet
 
-from .fcos_rpd import FCOSRepPoints
-#from .fcos_dcn import FCOSRepPoints
+#from .fcos_rpd import FCOSRepPoints
+from .fcos_dcn import FCOSRepPoints
 #from .fcos_rpd_exp import FCOSRepPoints
 #from .fcos_rpd_topk_per_box import FCOSRepPoints
 #from .fcos_rpd_less_center import FCOSRepPoints
