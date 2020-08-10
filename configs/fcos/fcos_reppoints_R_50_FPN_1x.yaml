@@ -5,7 +5,7 @@ MODEL:
   RESNETS:
     DEPTH: 50
   FCOS:
-    USE_DCN_V2: False
+    USE_DCN_V2: True
   MASK_ON: False
 SOLVER:
   IMS_PER_BATCH: 16
