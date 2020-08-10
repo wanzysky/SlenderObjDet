@@ -9,7 +9,7 @@ MODEL:
     IOU_LOSS_TYPE: "giou"
 
     CENTERNESS_ON_REG: True
-    NORM_REG_TARGETS: True
+#    NORM_REG_TARGETS: True
 
 INPUT:
   MIN_SIZE_TRAIN: (800,)

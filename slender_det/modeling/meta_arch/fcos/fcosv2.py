@@ -144,14 +144,9 @@ def get_sample_region(gt, strides, num_points_per, gt_xs, gt_ys, radius=1.0):
 
 
 def compute_targets_for_locations(
-        locations, targets, object_sizes_of_interest,
-        strides, center_sampling_radius, num_classes, norm_reg_targets=False
+        locations, targets, object_sizes_of_interest, strides, center_sampling_radius, num_classes
 ):
     num_points = [len(_) for _ in locations]
-    # build normalization weights before cat locations
-    norm_weights = None
-    if norm_reg_targets:
-        norm_weights = torch.cat([torch.empty(n).fill_(s) for n, s in zip(num_points, strides)])
 
     locations = torch.cat(locations, dim=0)
     xs, ys = locations[:, 0], locations[:, 1]
@@ -196,8 +191,6 @@ def compute_targets_for_locations(
 
         # calculate regression targets in 'fcos' type
         reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
-        if norm_reg_targets and norm_weights is not None:
-            reg_targets_per_im /= norm_weights[:, None]
 
         gt_classes.append(gt_classes_per_im)
         reg_targets.append(reg_targets_per_im)
@@ -361,7 +354,7 @@ class FCOSV2(nn.Module):
 
         gt_classes, reg_targets = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
-            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
+            self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
         return gt_classes, reg_targets
 
