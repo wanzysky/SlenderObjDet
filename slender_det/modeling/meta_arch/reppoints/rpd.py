@@ -102,8 +102,7 @@ class RepPointsDetector(nn.Module):
         # There are two implementations for dcn_base, where the code from
         # official implementation is currently used.
         # The alternative one is `zero_center_grid(self.dcn_kernel).view(1, -1, 1, 1)`
-        dcn_base = np.arange(-self.dcn_pad,
-                             self.dcn_pad + 1).astype(np.float64)
+        dcn_base = np.arange(-self.dcn_pad,self.dcn_pad + 1).astype(np.float64)
         dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
         dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
         dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
@@ -142,10 +141,8 @@ class RepPointsDetector(nn.Module):
         )
 
     def init_layers(self):
-        self.cls_conv = nn.Sequential(
-            *self.stacked_convs())
-        self.reg_conv = nn.Sequential(
-            *self.stacked_convs())
+        self.cls_conv = nn.Sequential(*self.stacked_convs())
+        self.reg_conv = nn.Sequential(*self.stacked_convs())
 
         self.deform_cls_conv = DeformConv(
             self.point_feat_channels,
@@ -158,24 +155,16 @@ class RepPointsDetector(nn.Module):
 
         points_out_dim = 4 if self.use_grid_points else 2 * self.num_points
         self.offsets_init = nn.Sequential(
-            nn.Conv2d(self.point_feat_channels,
-                      self.point_feat_channels,
-                      3, 1, 1),
+            nn.Conv2d(self.point_feat_channels, self.point_feat_channels, 3, 1, 1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(self.point_feat_channels,
-                      points_out_dim,
-                      1, 1, 0))
+            nn.Conv2d(self.point_feat_channels, points_out_dim, 1, 1, 0))
 
         self.offsets_refine = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(self.point_feat_channels,
-                      points_out_dim,
-                      1, 1, 0))
+            nn.Conv2d(self.point_feat_channels, points_out_dim, 1, 1, 0))
         self.logits = nn.Sequential(
             nn.ReLU(),
-            nn.Conv2d(self.point_feat_channels,
-                      self.cls_out_channels,
-                      1, 1, 0))
+            nn.Conv2d(self.point_feat_channels, self.cls_out_channels, 1, 1, 0))
 
         bias_init = float(-np.log((1 - 0.01) / 0.01))
         for modules in [

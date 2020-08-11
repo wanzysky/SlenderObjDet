@@ -4,11 +4,9 @@ MODEL:
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   RESNETS:
     DEPTH: 50
-  RESNETS:
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
-  FPN:
     NORM: "GN"
   PROPOSAL_GENERATOR:
     SAMPLE_MODE: "points"
