@@ -40,6 +40,8 @@ def ratio_of_bbox(bbox):
     """
     w = bbox[2] - bbox[0]
     h = bbox[3] - bbox[1]
+    if w * h == 0:
+        return 0.0
 
     return min(w, h) / max(w, h)
 
@@ -61,6 +63,8 @@ def ratio_of_polygon(polygon):
         ])
     rect = cv2.minAreaRect(hull.astype(np.float32))
     w, h = rect[1]
+    if w * h == 0:
+        return 0.0
     return min(w, h) / max(w, h)
 
 

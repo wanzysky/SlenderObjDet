@@ -33,7 +33,7 @@ def main():
     parser = default_argument_parser()
     args = parser.parse_args()
     cfg = setup(args)
-    dataset = cfg.DATASETS.TRAIN[0]
+    dataset = cfg.DATASETS.TEST[0]
     dicts = list(DatasetCatalog.get(dataset))
 
     metadata = MetadataCatalog.get(dataset)
