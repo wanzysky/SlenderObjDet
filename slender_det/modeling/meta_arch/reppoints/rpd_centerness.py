@@ -55,8 +55,8 @@ def compute_centerness_targets(reg_targets):
     centerness = (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * \
                  (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
     return torch.sqrt(centerness)
-    
-    
+
+
 def compute_targets_for_locations(
         locations, targets, object_sizes_of_interest,
         strides, center_sampling_radius, num_classes, norm_reg_targets=False
@@ -393,11 +393,12 @@ class RepPointsCenterness(nn.Module):
             self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
         )
 
-        centers = torch.cat(points,0)
-        strides = torch.cat(strides,0)
-        
+        centers = torch.cat(points, 0)
+        strides = torch.cat(strides, 0)
+
         cls_labels = []
         refine_bbox_labels = []
+        center_scores = []
         for i, targets_per_image in enumerate(gt_instances):
             image_size = targets_per_image.image_size
             centers_invalid = (centers[:, 0] >= image_size[1]).logical_or(
@@ -406,6 +407,9 @@ class RepPointsCenterness(nn.Module):
             match_quality_matrix = pairwise_iou(
                 targets_per_image.gt_boxes,
                 Boxes(init_boxes[i]))
+            max_qualities, _ = match_quality_matrix.max(1)
+            max_qualities = torch.clamp(max_qualities, min=1e-5)
+            center_score, _ = (match_quality_matrix / max_qualities[:, None]).max(0)
             gt_matched_idxs, bbox_mached = self.bbox_matcher(match_quality_matrix)
             cls_label = targets_per_image.gt_classes[gt_matched_idxs]
             cls_label[bbox_mached == 0] = self.num_classes
@@ -414,13 +418,13 @@ class RepPointsCenterness(nn.Module):
             
             cls_labels.append(cls_label)
             refine_bbox_labels.append(refine_bbox_label.tensor)
+            center_scores.append(center_score)
         
         refine_gt_classes = torch.stack(cls_labels)
         refine_reg_targets = torch.stack(refine_bbox_labels)
-        
-        
-        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets
-        
+        center_scores = torch.stack(center_scores)
+
+        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores
 
     def losses(
             self,
@@ -434,6 +438,7 @@ class RepPointsCenterness(nn.Module):
             gt_cls: torch.Tensor,
             gt_refine_bboxes,
             ltrb_offsets,
+            center_scores,
             strides):
         """
         Loss computation.
@@ -521,15 +526,12 @@ class RepPointsCenterness(nn.Module):
         ) / max(1, num_foreground)
 
         loss_localization_refine = (loss_localization_refine *
-            gt_center_score.unsqueeze(1)).sum() / max(1,
+            center_scores[foreground_idxs].unsqueeze(1)).sum() / max(1,
             num_foreground)
 
         gt_center_score = compute_centerness_targets(ltrb_offsets[valid_idxs])
         gt_center_score[gt_center_score != gt_center_score] = 1e-2
-        loss_cls = (loss_cls *
-            gt_center_score.unsqueeze(1)).sum() / max(1,
-            num_foreground)
-
+        loss_cls = loss_cls.sum() / max(1, num_foreground)
 
         return {"loss_cls": loss_cls,
                 "loss_localization_init": loss_localization_init * 0.5,
@@ -796,7 +798,7 @@ class RepPointsCenterness(nn.Module):
         init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
         refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
         if self.training:
-            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets =\
+            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores =\
                 self.get_ground_truth(point_centers, strides, flat_and_concate_levels(init_boxes), gt_instances)
                                       
             #flatten point_centers, strides
@@ -828,6 +830,7 @@ class RepPointsCenterness(nn.Module):
                 refine_gt_classes, 
                 refine_reg_targets,
                 ltrb_offsets,
+                center_scores,
                 strides)
             return losses
         else:

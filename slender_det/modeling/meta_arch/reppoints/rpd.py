@@ -77,7 +77,7 @@ class RepPointsDetector(nn.Module):
         self.vis_period = 0
 
         self.backbone = build_backbone(cfg)
-        self.transform_method = "minmax"
+        self.transform_method = "moment"
 
         if self.transform_method == "moment":
             self.moment_transfer = nn.Parameter(
@@ -254,14 +254,33 @@ class RepPointsDetector(nn.Module):
             points = (delta * point_strides[i] + base_grid).view(-1, C // 2, 2, H_i, W_i)
             pts_x = points[:, :, 0, :, :]
             pts_y = points[:, :, 1, :, :]
-            bbox_left = pts_x.min(dim=1, keepdim=True)[0]
-            bbox_right = pts_x.max(dim=1, keepdim=True)[0]
-            bbox_up = pts_y.min(dim=1, keepdim=True)[0]
-            bbox_bottom = pts_y.max(dim=1, keepdim=True)[0]
 
-            bbox = torch.cat(
-                [bbox_left, bbox_up, bbox_right, bbox_bottom],
-                dim=1)
+            if self.transform_method == "minmax":
+                bbox_left = pts_x.min(dim=1, keepdim=True)[0]
+                bbox_right = pts_x.max(dim=1, keepdim=True)[0]
+                bbox_up = pts_y.min(dim=1, keepdim=True)[0]
+                bbox_bottom = pts_y.max(dim=1, keepdim=True)[0]
+
+                bbox = torch.cat(
+                    [bbox_left, bbox_up, bbox_right, bbox_bottom],
+                    dim=1)
+            elif self.transform_method == "moment":
+                pts_y_mean = pts_y.mean(dim=1, keepdim=True)
+                pts_x_mean = pts_x.mean(dim=1, keepdim=True)
+                pts_y_std = torch.std(pts_y - pts_y_mean, dim=1, keepdim=True)
+                pts_x_std = torch.std(pts_x - pts_x_mean, dim=1, keepdim=True)
+                moment_transfer = (self.moment_transfer * self.moment_mul) + (
+                    self.moment_transfer.detach() * (1 - self.moment_mul))
+                moment_width_transfer = moment_transfer[0]
+                moment_height_transfer = moment_transfer[1]
+                half_width = pts_x_std * torch.exp(moment_width_transfer)
+                half_height = pts_y_std * torch.exp(moment_height_transfer)
+                bbox = torch.cat([
+                    pts_x_mean - half_width, pts_y_mean - half_height,
+                    pts_x_mean + half_width, pts_y_mean + half_height
+                ], dim=1)
+            else:
+                raise
             bboxes.append(bbox)
         return bboxes
 
