@@ -261,7 +261,6 @@ class RepPointsCenterness(nn.Module):
             nn.Conv2d(self.point_feat_channels,
                       init_points_out_dim,
                       1, 1, 0))
-        self.centerness_init = nn.Conv2d(self.point_feat_channels, 1, kernel_size=3, stride=1, padding=1)
 
         self.offsets_refine = nn.Sequential(
             nn.ReLU(),
@@ -284,7 +283,6 @@ class RepPointsCenterness(nn.Module):
                 self.offsets_refine,
                 self.deform_cls_conv,
                 self.deform_reg_conv,
-                self.centerness_init,
                 self.centerness_refine,
                 ]:
             for layer in modules.modules():
@@ -372,30 +370,11 @@ class RepPointsCenterness(nn.Module):
 
     @torch.no_grad()
     def get_ground_truth(self, points: torch.Tensor, strides, init_boxes, gt_instances):
-        object_sizes_of_interest = [
-            [-1, 64],
-            [64, 128],
-            [128, 256],
-            [256, 512],
-            [512, INF],
-        ]
-        expanded_object_sizes_of_interest = []
-        for l, points_per_level in enumerate(points):
-            object_sizes_of_interest_per_level = \
-                points_per_level.new_tensor(object_sizes_of_interest[l])
-            expanded_object_sizes_of_interest.append(
-                object_sizes_of_interest_per_level[None].expand(len(points_per_level), -1)
-            )
-        expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
-
-        init_gt_classes, init_reg_targets, ltrb_offsets = compute_targets_for_locations(
-            points, gt_instances, expanded_object_sizes_of_interest,
-            self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
-        )
-
         centers = torch.cat(points, 0)
         strides = torch.cat(strides, 0)
 
+        init_objectness_labels = []
+        init_bbox_labels = []
         cls_labels = []
         refine_bbox_labels = []
         center_scores = []
@@ -403,6 +382,10 @@ class RepPointsCenterness(nn.Module):
             image_size = targets_per_image.image_size
             centers_invalid = (centers[:, 0] >= image_size[1]).logical_or(
                 centers[:, 1] >= image_size[0])
+
+            init_objectness_label, init_bbox_label = self.matcher(
+                centers, strides, targets_per_image.gt_boxes)
+            init_objectness_label[centers_invalid] = 0
 
             match_quality_matrix = pairwise_iou(
                 targets_per_image.gt_boxes,
@@ -416,28 +399,30 @@ class RepPointsCenterness(nn.Module):
             cls_label[centers_invalid] = -1
             refine_bbox_label = targets_per_image.gt_boxes[gt_matched_idxs]
             
+            init_objectness_labels.append(init_objectness_label)
+            init_bbox_labels.append(init_bbox_label)
             cls_labels.append(cls_label)
             refine_bbox_labels.append(refine_bbox_label.tensor)
             center_scores.append(center_score)
         
+        init_objectness_labels = torch.stack(init_objectness_labels)
+        init_bbox_labels = torch.stack(init_bbox_labels)
         refine_gt_classes = torch.stack(cls_labels)
         refine_reg_targets = torch.stack(refine_bbox_labels)
         center_scores = torch.stack(center_scores)
 
-        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores
+        return init_objectness_labels, init_bbox_labels, refine_gt_classes, refine_reg_targets, center_scores
 
     def losses(
             self,
             pred_logits,
             pred_init_boxes,
             pred_refine_boxes,
-            pred_centerness_init,
             pred_centerness_refine,
             gt_init_cls,
             gt_init_bboxes,
             gt_cls: torch.Tensor,
             gt_refine_bboxes,
-            ltrb_offsets,
             center_scores,
             strides):
         """
@@ -465,7 +450,7 @@ class RepPointsCenterness(nn.Module):
         num_foreground = foreground_idxs.sum().item() / gt_init_bboxes.shape[0]
         get_event_storage().put_scalar("num_foreground", num_foreground)
         
-        init_foreground_idxs = (gt_init_cls >= 0).logical_and(gt_init_cls != self.num_classes)
+        init_foreground_idxs = gt_init_cls > 0
         num_init_foreground = init_foreground_idxs.sum().item() / gt_init_bboxes.shape[0]
         
         gt_cls_target = torch.zeros_like(pred_logits)
@@ -476,15 +461,13 @@ class RepPointsCenterness(nn.Module):
             + (1 - self.loss_normalizer_momentum) * num_foreground
         )
         
-        gt_center_score = compute_centerness_targets(ltrb_offsets[init_foreground_idxs])
-
         loss_cls = sigmoid_focal_loss_jit(
             pred_logits[valid_idxs],
             gt_cls_target[valid_idxs],
             alpha=self.focal_loss_alpha,
             gamma=self.focal_loss_gamma,
-            reduction="none"
-        )
+            reduction="sum"
+        ) / max(1, num_foreground)
 
         strides = strides[None].repeat(pred_logits.shape[0], 1)
         coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
@@ -492,21 +475,13 @@ class RepPointsCenterness(nn.Module):
             pred_init_boxes[init_foreground_idxs] / coords_norm_init,
             gt_init_bboxes[init_foreground_idxs] / coords_norm_init,
             0.11,
-            reduction="none"
-        )
-        loss_localization_init = (loss_localization_init *
-            gt_center_score.unsqueeze(1)).sum() / max(1,
-            num_init_foreground)
+            reduction="sum"
+        ) / max(1, num_init_foreground)
 
 #        loss_localization_refine = box_iou_loss(
 #            pred_refine_boxes[foreground_idxs], gt_refine_bboxes[foreground_idxs], gt_center_score,
 #            loss_type=self.iou_loss_type
 #        ) / max(1, num_foreground)
-
-        pred_center_score = pred_centerness_init[init_foreground_idxs].view(-1) 
-        loss_centerness_init = F.binary_cross_entropy_with_logits(
-            pred_center_score, gt_center_score, reduction='sum'
-        ) / max(1, num_init_foreground)
 
 #        loss_localization_init = smooth_l1_loss(
 #            pred_init_boxes[init_foreground_idxs] / coords_norm_init,
@@ -519,7 +494,7 @@ class RepPointsCenterness(nn.Module):
             gt_refine_bboxes[foreground_idxs] / coords_norm_refine,
             0.11, reduction="none")
         pred_center_score = pred_centerness_refine[foreground_idxs].view(-1) 
-        gt_center_score = compute_centerness_targets(ltrb_offsets[foreground_idxs])
+        gt_center_score = torch.ones_like(pred_center_score)
         gt_center_score[gt_center_score != gt_center_score] = 1e-2
         loss_centerness_refine = F.binary_cross_entropy_with_logits(
             pred_center_score, gt_center_score, reduction='sum'
@@ -529,14 +504,9 @@ class RepPointsCenterness(nn.Module):
             center_scores[foreground_idxs].unsqueeze(1)).sum() / max(1,
             num_foreground)
 
-        gt_center_score = compute_centerness_targets(ltrb_offsets[valid_idxs])
-        gt_center_score[gt_center_score != gt_center_score] = 1e-2
-        loss_cls = loss_cls.sum() / max(1, num_foreground)
-
         return {"loss_cls": loss_cls,
                 "loss_localization_init": loss_localization_init * 0.5,
                 "loss_localization_refine": loss_localization_refine,
-                "loss_centerness_init": loss_centerness_init * 0.5,
                 "loss_centerness_refine": loss_centerness_refine
                 }
 
@@ -753,8 +723,6 @@ class RepPointsCenterness(nn.Module):
         cls_features = [self.cls_conv(f) for f in features]
         reg_features = [self.reg_conv(f) for f in features]
         
-        centerness_init = [self.centerness_init(f) for f in cls_features]
-
         #if use_dcn_v2, abandon the last 9(or 2) weights channels.
         offsets_init = [self.offsets_init(f)[:,:2*self.num_points,:,:] for f in reg_features]
         if self.use_dcn_v2:
@@ -797,8 +765,9 @@ class RepPointsCenterness(nn.Module):
         
         init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
         refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
+
         if self.training:
-            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores =\
+            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, center_scores =\
                 self.get_ground_truth(point_centers, strides, flat_and_concate_levels(init_boxes), gt_instances)
                                       
             #flatten point_centers, strides
@@ -812,7 +781,7 @@ class RepPointsCenterness(nn.Module):
                 self.visualize_training(batched_inputs, results)
 
             self.may_visualize_gt(
-                batched_inputs, (init_gt_classes!=self.num_classes).bool(),
+                batched_inputs, init_gt_classes.bool(),
                 init_reg_targets, refine_gt_classes, refine_reg_targets,
                 point_centers,
                 flat_and_concate_levels(init_boxes),
@@ -823,13 +792,11 @@ class RepPointsCenterness(nn.Module):
                 flat_and_concate_levels(logits),
                 flat_and_concate_levels(init_boxes),
                 flat_and_concate_levels(refine_boxes),
-                flat_and_concate_levels(centerness_init),
                 flat_and_concate_levels(centerness_refine),
                 init_gt_classes, 
                 init_reg_targets, 
                 refine_gt_classes, 
                 refine_reg_targets,
-                ltrb_offsets,
                 center_scores,
                 strides)
             return losses
