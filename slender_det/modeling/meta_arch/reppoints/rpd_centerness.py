@@ -73,6 +73,7 @@ def compute_targets_for_locations(
     gt_classes = []
     reg_targets = []
     ltrb_offsets = []
+    norm_weights = []
     for im_i in range(len(targets)):
         targets_per_im = targets[im_i]
         bboxes = targets_per_im.gt_boxes.tensor
@@ -108,19 +109,21 @@ def compute_targets_for_locations(
         gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
         # NOTE: set background labels to NUM_CLASSES not 0
         gt_classes_per_im[locations_to_min_area == INF] = num_classes
-        
+
         gt_boxes_per_im = bboxes.repeat(len(locations),1,1)
-        
+
         # calculate regression targets in box type
         gt_boxes_per_im = gt_boxes_per_im[range(len(locations)), locations_to_gt_inds]
         ltrb_offsets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+        norm_weights_per_im = locations_to_min_area / area.min()
 #        if norm_reg_targets and norm_weights is not None:
 #            reg_targets_per_im /= norm_weights[:, None]
 
         gt_classes.append(gt_classes_per_im)
         reg_targets.append(gt_boxes_per_im)
         ltrb_offsets.append(ltrb_offsets_per_im)
-    return torch.stack(gt_classes), torch.stack(reg_targets), torch.stack(ltrb_offsets)
+        norm_weights.append(norm_weights_per_im)
+    return torch.stack(gt_classes), torch.stack(reg_targets), torch.stack(ltrb_offsets), torch.stack(norm_weights)
 
 @META_ARCH_REGISTRY.register()
 class RepPointsCenterness(nn.Module):
@@ -388,7 +391,7 @@ class RepPointsCenterness(nn.Module):
             )
         expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
 
-        init_gt_classes, init_reg_targets, ltrb_offsets = compute_targets_for_locations(
+        init_gt_classes, init_reg_targets, ltrb_offsets, norm_weights = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
             self.fpn_strides, self.center_sampling_radius, self.num_classes, self.norm_reg_targets
         )
@@ -424,7 +427,7 @@ class RepPointsCenterness(nn.Module):
         refine_reg_targets = torch.stack(refine_bbox_labels)
         center_scores = torch.stack(center_scores)
 
-        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores
+        return init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores, norm_weights
 
     def losses(
             self,
@@ -439,6 +442,7 @@ class RepPointsCenterness(nn.Module):
             gt_refine_bboxes,
             ltrb_offsets,
             center_scores,
+            norm_weights,
             strides):
         """
         Loss computation.
@@ -495,7 +499,7 @@ class RepPointsCenterness(nn.Module):
             reduction="none"
         )
         loss_localization_init = (loss_localization_init *
-            gt_center_score.unsqueeze(1)).sum() / max(1,
+            gt_center_score.unsqueeze(1) / norm_weights[init_foreground_idxs].unsqueeze(1)).sum() / max(1,
             num_init_foreground)
 
 #        loss_localization_refine = box_iou_loss(
@@ -534,7 +538,7 @@ class RepPointsCenterness(nn.Module):
         loss_cls = loss_cls.sum() / max(1, num_foreground)
 
         return {"loss_cls": loss_cls,
-                "loss_localization_init": loss_localization_init * 0.5,
+                "loss_localization_init": loss_localization_init,
                 "loss_localization_refine": loss_localization_refine,
                 "loss_centerness_init": loss_centerness_init * 0.5,
                 "loss_centerness_refine": loss_centerness_refine
@@ -798,7 +802,7 @@ class RepPointsCenterness(nn.Module):
         init_boxes = self.points2bbox(point_centers, offsets_init, [1,2,4,8,16])
         refine_boxes = self.points2bbox(point_centers, offsets_refine, [1,2,4,8,16])
         if self.training:
-            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores =\
+            init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, ltrb_offsets, center_scores, norm_weights =\
                 self.get_ground_truth(point_centers, strides, flat_and_concate_levels(init_boxes), gt_instances)
                                       
             #flatten point_centers, strides
@@ -831,6 +835,7 @@ class RepPointsCenterness(nn.Module):
                 refine_reg_targets,
                 ltrb_offsets,
                 center_scores,
+                norm_weights,
                 strides)
             return losses
         else:
