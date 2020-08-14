@@ -198,6 +198,7 @@ class COCOEvaluator(Base):
         assert len(class_names) == precisions.shape[2]
 
         results_per_category = []
+        results_per_category_r = []
         for idx, name in enumerate(class_names):
             # area range index 0: all area ranges
             # max dets index -1: typically 100 per image
@@ -205,6 +206,9 @@ class COCOEvaluator(Base):
             precision = precision[precision > -1]
             ap = np.mean(precision) if precision.size else float("nan")
             results_per_category.append(("{}".format(name), float(ap * 100)))
+            results_per_category_r.append(
+                ("{}".format(name),
+                precisions[:, :, idx, :, -1].mean(0).mean(0)))
 
         # tabulate it
         N_COLS = min(6, len(results_per_category) * 2)
@@ -219,14 +223,14 @@ class COCOEvaluator(Base):
         )
         print("Per-category {} AP: \n".format(iou_type) + table)
 
-        results.update({"AP-" + name: ap for name, ap in results_per_category})
+        results["AP-ratios"] = {"AP-" + name: ap.tolist() for name, ap in results_per_category_r}
         return results
 
 
     def _evaluate_predictions_ar(self, predictions):
         res = {}
         aspect_ratios = {
-            "all": "", "l1": " 0  - 1/8", "l2": "1/8 - 1/4", "l3": "1/4 - 4/1",
+            "all": "", "l1": " 0  - 1/5", "l2": "1/5 - 1/3", "l3": "1/3 - 3/1",
             "l4": "3/1 - 5/1", "l5": "5/1 - INF",
         }
         limits = [100]
@@ -235,6 +239,8 @@ class COCOEvaluator(Base):
                 stats = _evaluate_predictions_ar(predictions, self._coco_api, aspect_ratio=aspect_ratio, limit=limit)
                 key = "AR{}@{:d}".format(suffix, limit)
                 res[key] = float(stats["ar"].item() * 100)
+                key = "mAR{}@{:d}".format(suffix, limit)
+                res[key] = float(stats["mar"].item() * 100)
 
         print("Proposal metrics: \n" + create_small_table(res))
         self._results["predictions_proposal_AR"] = res
@@ -250,16 +256,17 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
         "l5": 5
     }
     aspect_ratio_ranges = [
-        [0 / 1, 1e3 / 1],
-        [0 / 1, 1 / 8],
-        [1 / 8, 1 / 4],
-        [1 / 4, 4 / 1],
+        [0 / 1, 1e5 / 1],
+        [0 / 1, 1 / 5],
+        [1 / 5, 1 / 3],
+        [1 / 3, 3 / 1],
         [3 / 1, 5 / 1],
-        [5 / 1, 1e3 / 1],
+        [5 / 1, 1e5 / 1],
     ]
     assert aspect_ratio in aspect_ratios, "Unknown aspect ration range: {}".format(aspect_ratio)
     aspect_ratio_range = aspect_ratio_ranges[aspect_ratios[aspect_ratio]]
     gt_overlaps = []
+    gt_overlaps_m = []
     num_pos = 0
 
     for prediction_dict in predictions:
@@ -269,6 +276,9 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
             BoxMode.convert(prediction['bbox'], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
             for prediction in predictions
         ]
+        predict_classes = torch.tensor([
+            prediction["category_id"] for prediction in predictions
+        ])
         predict_boxes = torch.as_tensor(predict_boxes).reshape(-1, 4)
         predict_boxes = Boxes(predict_boxes)
 
@@ -279,6 +289,7 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
             BoxMode.convert(obj["bbox"], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
             for obj in anno
         ]
+        gt_classes = torch.tensor([obj["category_id"] for obj in anno])
         gt_aspect_ratios = [
             obj["ratio"]  # w / h ==> aspect ratio
             for obj in anno
@@ -293,6 +304,7 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
         valid_gt_inds = (gt_aspect_ratios >= aspect_ratio_range[0]) & \
                         (gt_aspect_ratios <= aspect_ratio_range[1])
         gt_boxes = gt_boxes[valid_gt_inds]
+        gt_classes = gt_classes[valid_gt_inds]
 
         if len(gt_boxes) == 0:
             continue
@@ -302,30 +314,43 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
             predict_boxes = predict_boxes
 
         overlaps = pairwise_iou(predict_boxes, gt_boxes)
+        class_matched = predict_classes[:, None] == gt_classes[None]
+        overlaps_when_matched = overlaps * class_matched
 
         _gt_overlaps = torch.zeros(len(gt_boxes))
+        _gt_overlaps_m = torch.zeros(len(gt_boxes))
         for j in range(min(len(predictions), len(gt_boxes))):
             # find which proposal box maximally covers each gt box
             # and get the iou amount of coverage for each gt box
             max_overlaps, argmax_overlaps = overlaps.max(dim=0)
+            max_overlaps_m, argmax_overlaps_m = overlaps_when_matched.max(dim=0)
 
             # find which gt box is 'best' covered (i.e. 'best' = most iou)
             gt_ovr, gt_ind = max_overlaps.max(dim=0)
+            gt_ovr_m, gt_ind_m = max_overlaps.max(dim=0)
             assert gt_ovr >= 0
             # find the proposal box that covers the best covered gt box
             box_ind = argmax_overlaps[gt_ind]
+            box_ind_m = argmax_overlaps_m[gt_ind_m]
             # record the iou coverage of this gt box
             _gt_overlaps[j] = overlaps[box_ind, gt_ind]
+            _gt_overlaps_m[j] = overlaps[box_ind_m, gt_ind_m]
             assert _gt_overlaps[j] == gt_ovr
             # mark the proposal box and the gt box as used
             overlaps[box_ind, :] = -1
             overlaps[:, gt_ind] = -1
+            overlaps_when_matched[box_ind_m, :] = -1
+            overlaps_when_matched[:, gt_ind_m] = -1
 
         # append recorded iou coverage level
         gt_overlaps.append(_gt_overlaps)
+        gt_overlaps_m.append(_gt_overlaps_m)
 
     gt_overlaps = (
         torch.cat(gt_overlaps, dim=0) if len(gt_overlaps) else torch.zeros(0, dtype=torch.float32)
+    )
+    gt_overlaps_m = (
+        torch.cat(gt_overlaps_m, dim=0) if len(gt_overlaps_m) else torch.zeros(0, dtype=torch.float32)
     )
     gt_overlaps, _ = torch.sort(gt_overlaps)
 
@@ -333,14 +358,19 @@ def _evaluate_predictions_ar(predictions, coco_api, thresholds=None, aspect_rati
         step = 0.05
         thresholds = torch.arange(0.5, 0.95 + 1e-5, step, dtype=torch.float32)
     recalls = torch.zeros_like(thresholds)
+    recalls_m = torch.zeros_like(thresholds)
     # compute recall for each iou threshold
     for i, t in enumerate(thresholds):
         recalls[i] = (gt_overlaps >= t).float().sum() / float(num_pos)
+        recalls_m[i] = (gt_overlaps_m >= t).float().sum() / float(num_pos)
     # ar = 2 * np.trapz(recalls, thresholds)
     ar = recalls.mean()
+    mar = recalls_m.mean()
     return {
         "ar": ar,
+        "mar": mar,
         "recalls": recalls,
+        "m_recalls": recalls_m,
         "thresholds": thresholds,
         "gt_overlaps": gt_overlaps,
         "num_pos": num_pos,
