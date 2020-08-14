@@ -1,3 +1,4 @@
+from typing import List
 from collections import Iterable
 
 import numpy as np
@@ -18,6 +19,10 @@ def between(a, a_range: tuple) -> bool:
     if isinstance(a, np.ndarray):
         return np.logical_and(a >= a_range[0], a <= a_range[1])
     return a >= a_range[0] and a <= a_range[1]
+
+
+def between_ranges(a, ranges: List[tuple]) -> List[bool]:
+    return [between(a, a_range) for a_range in ranges]
 
 
 def all_the_same(a_list: list) -> bool:

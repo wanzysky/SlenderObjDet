@@ -1,5 +1,3 @@
-import torch
-import json
 import io
 import contextlib
 import os
@@ -7,6 +5,8 @@ from collections import defaultdict
 
 import tqdm
 import cv2
+import pickle
+import torch
 import numpy as np
 from detectron2.structures import Boxes, BoxMode, pairwise_iou, Instances
 from detectron2.engine import default_argument_parser, default_setup
@@ -18,6 +18,7 @@ from slender_det.structures.masks import PolygonMasks
 from slender_det.evaluation.coco_evaluation import COCOEvaluator
 from slender_det.evaluation.coco import COCO
 from slender_det.config import get_cfg
+from concern.smart_path import smart_path
 
 
 def setup(args):
@@ -93,6 +94,7 @@ def main():
 
     dicts = list(DatasetCatalog.get(dataset))
 
+    count = 0
     for dic in tqdm.tqdm(dicts):
         assert len(pred_by_image[dic["image_id"]]) == 1
 
@@ -102,7 +104,12 @@ def main():
         # Push an image
         dic["annotations"] = reconstruct_ann(dic["annotations"])
         evaluator.process([dic], [{"instances": prediction}])
+        count += 1
     result = evaluator.evaluate()
+    prediction_path = smart_path(args.prediction)
+    save_path = prediction_path.parent.joinpath(prediction_path.stem + ".pkl")
+    with save_path.open("rb") as writer:
+        pickle.dump(result, writer)
     print_csv_format(result)
 
 if __name__ == '__main__':
