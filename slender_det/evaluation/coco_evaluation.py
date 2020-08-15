@@ -231,18 +231,18 @@ class COCOEvaluator(Base):
     def _evaluate_predictions_ar(self, predictions):
         res = {}
         aspect_ratios = {
-            "all":       [0 / 1, 1e5 / 1],
-            " 0  - 1/5": [0 / 1, 1 / 5],   
-            "1/5 - 1/3": [1 / 5, 1 / 3],
-            "1/3 - 3/1": [1 / 3, 3 / 1],
-            "3/1 - 5/1": [3 / 1, 5 / 1],
-            "5/1 - INF": [5 / 1, 1e5 / 1],
+            "all ratios": [0 / 1, 1e5 / 1],
+            " 0  - 1/5":  [0 / 1, 1 / 5],
+            "1/5 - 1/3":  [1 / 5, 1 / 3],
+            "1/3 - 3/1":  [1 / 3, 3 / 1],
+            "3/1 - 5/1":  [3 / 1, 5 / 1],
+            "5/1 - INF":  [5 / 1, 1e5 / 1],
         }
         areas = {
-            "all": [0, float("inf")],
-            "small": [0, 32**2],
-            "medium": [32**2, 96**2],
-            "large": [96**2, float("inf")]
+            "all areas": [0, float("inf")],
+            "small":     [0, 32**2],
+            "medium":    [32**2, 96**2],
+            "large":     [96**2, float("inf")]
         }
         limits = [100]
         for limit in limits:
@@ -255,12 +255,12 @@ class COCOEvaluator(Base):
                 limit=limit)
             recalls = stats["recalls"]
             for i, key in enumerate(areas):
-                res["AR-{}@{:d}".format(key, limit)] = recalls[:, -1, 0, i].mean()
-                res["mAR-{}@{:d}".format(key, limit)] = recalls[:, :-1, 0, i].mean()
+                res["AR-{}@{:d}".format(key, limit)] = recalls[:, -1, 0, i].mean() * 100
+                res["mAR-{}@{:d}".format(key, limit)] = recalls[:, :-1, 0, i].mean() * 100
 
             for i, key in enumerate(aspect_ratios):
-                res["AR-{}@{:d}".format(key, limit)] = recalls[:, -1, i, 0].mean()
-                res["mAR-{}@{:d}".format(key, limit)] = recalls[:, :-1, i, 0].mean()
+                res["AR-{}@{:d}".format(key, limit)] = recalls[:, -1, i, 0].mean() * 100
+                res["mAR-{}@{:d}".format(key, limit)] = recalls[:, :-1, i, 0].mean() * 100
 
             key = "AR@{:d}".format(limit)
             res[key] = float(stats["ar"].item() * 100)
@@ -268,6 +268,7 @@ class COCOEvaluator(Base):
             res[key] = float(stats["mar"].item() * 100)
 
         print("Proposal metrics: \n" + create_small_table(res))
+        res["ar-stats"] = stats
         self._results["ar"] = res
 
 

@@ -105,10 +105,11 @@ def main():
         dic["annotations"] = reconstruct_ann(dic["annotations"])
         evaluator.process([dic], [{"instances": prediction}])
         count += 1
+
     result = evaluator.evaluate()
     prediction_path = smart_path(args.prediction)
     save_path = prediction_path.parent.joinpath(prediction_path.stem + ".pkl")
-    with save_path.open("rb") as writer:
+    with save_path.open("wb") as writer:
         pickle.dump(result, writer)
     print_csv_format(result)
 
