@@ -73,8 +73,9 @@ def main():
     parser.add_argument("--prediction", help="predictions_file_path")
     args = parser.parse_args()
     cfg = setup(args)
-    with open(args.prediction, mode="rb") as fp:
-        predictions = torch.load(fp)
+    with smart_path(args.prediction).open("rb") as fp:
+        buf = io.BytesIO(fp.read())
+        predictions = torch.load(buf)
     pred_by_image = defaultdict(list)
     for p in predictions:
         pred_by_image[p["image_id"]].append(p)
