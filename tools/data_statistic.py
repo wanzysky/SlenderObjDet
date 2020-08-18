@@ -99,47 +99,60 @@ def PlotPiecewiseBars(dataset, num_subfigs, sorted=False):
     plt.savefig("barchart.jpg")
 
 
-def PlotGradientColorBars(dataset, num_subfigs, cmap, sorted=False):
+def PlotGradientColorBars(dataset, num_subfigs, cmap, sorted=False, include_all=False):
     ratios = {"0-1/5": [0, 1/5], "1/5-1/3": [1/5, 1/3], "1/3-1": [1/3, 1]}
     dicts = list(DatasetCatalog.get(dataset))
 
     metadata = MetadataCatalog.get(dataset)
     labels = metadata.thing_classes
-    num_thing_per_fig = len(labels) // num_subfigs
     bars = dict()
     for key in ratios.keys():
         bars[key] = [0 for _ in range(len(labels))]
-    
-    all_ratios = []
+
     for dic in tqdm(dicts):
         for obj in dic["annotations"]:
             ratio = COCO.compute_ratio(obj, oriented=True)["ratio"]
             for key, ratio_range in ratios.items():
                 if between(ratio, ratio_range):
                     bars[key][obj["category_id"]] += 1
-            all_ratios.append(ratio)
     slender_ratios = np.zeros(len(labels))
     num_all_ratios = np.zeros(len(labels))
+    
+    num_slender_ratios = np.array(bars["0-1/5"])
+    
     for i in range(len(labels)):
         slender_ratios[i] = bars["0-1/5"][i] / (bars["0-1/5"][i]+bars["1/5-1/3"][i]+bars["1/3-1"][i])
-        for key, bar in bars.items():
-            num_all_ratios = num_all_ratios + np.array(bar)
+    for key, bar in bars.items():
+        num_all_ratios = num_all_ratios + np.array(bar)
+    
+    slender_ratio_all = num_slender_ratios.sum() / num_all_ratios.sum()
     if sorted == True: 
         sorted_indexes = np.argsort(slender_ratios)
         min_ratio = slender_ratios[sorted_indexes[0]]
         max_ratio = slender_ratios[sorted_indexes[-1]]
     else:
+        sorted_indexes = np.arange(len(labels))
         min_ratio = slender_ratios.min()
         max_ratio = slender_ratios.max()
+    if include_all == True:
+        slender_ratios = np.append(slender_ratios, slender_ratio_all)
+        num_all_ratios = np.append(num_all_ratios, num_all_ratios.sum())
+        sorted_indexes = np.insert(sorted_indexes, 0, len(labels))
+        labels.append('all')
+        
     fig, axes = plt.subplots(num_subfigs,1)
     
     norm = mpl.colors.Normalize(vmin=min_ratio, vmax=max_ratio)
     subplots_adjust(left=0.15, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0.6)
+    num_thing_per_fig = len(labels) // num_subfigs
     for fig_i in range(num_subfigs):
-        if sorted == True:
-            index_range = sorted_indexes[num_thing_per_fig*fig_i:num_thing_per_fig*(fig_i+1)]
-        else:
-            index_range = np.arange(num_thing_per_fig*fig_i,num_thing_per_fig*(fig_i+1))
+        start = num_thing_per_fig * fig_i
+        end = num_thing_per_fig*(fig_i+1)
+        
+        if fig_i == num_subfigs-1:
+            end = len(labels)
+        index_range = sorted_indexes[start:end]
+        
         label = []
         for ind_i in index_range:
             label.append(labels[ind_i])
@@ -217,7 +230,7 @@ def main():
     cfg = setup(args)
     dataset = cfg.DATASETS.TEST[0]
     
-    PlotGradientColorBars(dataset,3,mpl.cm.hot)
+    PlotGradientColorBars(dataset,3,mpl.cm.hot,True,True)
 
 if __name__ == '__main__':
     main()
