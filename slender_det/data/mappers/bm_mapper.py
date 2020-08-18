@@ -14,7 +14,6 @@ from detectron2.utils.logger import log_every_n_seconds
 from concern.smart_path import smart_path
 from utils.nori_redis import NoriRedis
 
-
 import pycocotools.mask as mask_util
 
 from detectron2.structures import (
@@ -32,16 +31,17 @@ from detectron2.data.catalog import MetadataCatalog
 from detectron2.data.detection_utils import polygons_to_bitmask
 from slender_det.structures.borders import BorderMasks
 
+
 class BorderMaskMapper(D2Mapper):
     """
     Inherited from DatasetMapper of Detectron2, but adding border masks to data dicts.
     """
 
     def __init__(
-        self,
-        cfg,
-        mask_keys=["sizes"],
-        is_train=True
+            self,
+            cfg,
+            mask_keys=["sizes"],
+            is_train=True
     ):
         super().__init__(cfg, is_train=is_train)
         assert len(mask_keys) > 0
@@ -145,7 +145,7 @@ class BorderMaskMapper(D2Mapper):
             dataset_dict.pop("annotations", None)
             dataset_dict.pop("sem_seg_file_name", None)
             return dataset_dict
-        
+
         if "annotations" in dataset_dict:
             # USER: Modify this if you want to keep them for some reason.
             for anno in dataset_dict["annotations"]:
@@ -162,8 +162,8 @@ class BorderMaskMapper(D2Mapper):
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
-            
-            #instances = utils.annotations_to_instances(
+
+            # instances = utils.annotations_to_instances(
             instances = annotations_to_instances(
                 annos, image_shape, mask_format=self.mask_format
             )
@@ -177,6 +177,7 @@ class BorderMaskMapper(D2Mapper):
             for key in self.mask_keys:
                 assert dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:], dataset_dict[key].shape
         return dataset_dict
+
 
 def annotations_to_instances(annos, image_size, mask_format="polygon"):
     """

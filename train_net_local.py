@@ -23,8 +23,8 @@ import torch
 
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.data import MetadataCatalog, build_detection_train_loader
-from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
+from detectron2.data import MetadataCatalog
+from detectron2.engine import default_argument_parser, default_setup, hooks, launch
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
@@ -37,18 +37,14 @@ from detectron2.evaluation import (
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
 
-from slender_det.modeling import build_model
+from slender_det.engine import BaseTrainer
 from slender_det.config import get_cfg
 from slender_det.evaluation import COCOEvaluator
 
 
-class Trainer(DefaultTrainer):
+class Trainer(BaseTrainer):
     """
-    We use the "DefaultTrainer" which contains pre-defined default logic for
-    standard training workflow. They may not work for you, especially if you
-    are working on a new research project. In that case you can use the cleaner
-    "SimpleTrainer", or write your own training loop. You can use
-    "tools/plain_train_net.py" as an example.
+    We use the "BaseTrainer" which contains pre-defined default logic for standard training workflow
     """
     
     @classmethod
@@ -62,20 +58,6 @@ class Trainer(DefaultTrainer):
         """
         return build_detection_train_loader(cfg, mapper=BorderMaskMapper(cfg))
         
-    @classmethod
-    def build_model(cls, cfg):
-        """
-        Returns:
-            torch.nn.Module:
-
-        It now calls :func:`slender_det.modeling.build_model`.
-        Overwrite it for using our own model.
-        """
-        model = build_model(cfg)
-        logger = logging.getLogger(__name__)
-        logger.info("Model:\n{}".format(model))
-        return model
-
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """
@@ -104,12 +86,12 @@ class Trainer(DefaultTrainer):
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "cityscapes_instance":
             assert (
-                torch.cuda.device_count() >= comm.get_rank()
+                    torch.cuda.device_count() >= comm.get_rank()
             ), "CityscapesEvaluator currently do not work with multiple machines."
             return CityscapesInstanceEvaluator(dataset_name)
         if evaluator_type == "cityscapes_sem_seg":
             assert (
-                torch.cuda.device_count() >= comm.get_rank()
+                    torch.cuda.device_count() >= comm.get_rank()
             ), "CityscapesEvaluator currently do not work with multiple machines."
             return CityscapesSemSegEvaluator(dataset_name)
         elif evaluator_type == "pascal_voc":

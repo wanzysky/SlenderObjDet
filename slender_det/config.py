@@ -11,6 +11,9 @@ _C.DEBUG = False
 
 _C.USE_NORI = False
 _C.NEED_MASKS = False
+
+_C.DATALOADER.OSS_ROOT = "s3://detection/"
+
 _C.NORI_PATH = "s3://detection/datasets/coco/"
 _C.REDIS = CN()
 _C.REDIS.HOST = "10.124.171.195"
