@@ -12,8 +12,9 @@ def main(dest_dir="s3://detection/benchmarking/inference/"):
 
     while True:
         for prediction_path in dest_dir.glob("*.pth"):
-            command = "rlaunch --cpu 2 --memory $((10*1024)) -- python3 -m tools.result_statistic --config-file configs/retina/base_retina_R_50_FPN_1x.yaml --prediction {}".format(
-                prediction_path.as_uri())
+            command = "rlaunch --cpu 2 --memory $((10*1024)) -- python3 -m " \
+                      "tools.result_statistic --config-file configs/retina/base_retina_R_50_FPN_1x.yaml " \
+                      "--prediction {}".format(prediction_path.as_uri())
             print(command)
             code = os.system(command)
             print(code)
@@ -25,5 +26,6 @@ def main(dest_dir="s3://detection/benchmarking/inference/"):
 
         print("Dir {} is clean, sleep for 10 secs.".format(dest_dir.as_uri()))
         time.sleep(10)
+
 
 Fire(main)
