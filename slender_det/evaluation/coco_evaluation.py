@@ -94,6 +94,7 @@ class COCOEvaluator(Base):
 
         if self._output_dir:
             PathManager.mkdirs(self._output_dir)
+            PathManager.mkdirs(os.path.join(self._output_dir, name))
             file_path = os.path.join(self._output_dir, name, "instances_predictions.pth")
             with PathManager.open(file_path, "wb") as f:
                 torch.save(predictions, f)
