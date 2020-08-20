@@ -24,7 +24,7 @@ class COCO(Base):
         # create index
         print('creating index...')
         anns, cats, imgs = {}, {}, {}
-        imgToAnns,catToImgs = defaultdict(list),defaultdict(list)
+        imgToAnns, catToImgs = defaultdict(list),defaultdict(list)
 
         if 'annotations' in self.dataset:
             for ann in self.dataset['annotations']:
@@ -55,10 +55,19 @@ class COCO(Base):
 
     @classmethod
     def compute_ratio(self, ann, oriented=None):
+        if "ratio" in ann:
+            return ann
+
         if oriented is None:
             oriented = self.oriented
 
-        if ann["iscrowd"]:
+        if "segmentation" in ann:
+            segm = [poly for poly in ann["segmentation"] if len(poly) % 2 == 0 and len(poly) >= 6]
+        else:
+            segm = []
+        if ann["iscrowd"] or\
+                "segmentation" not in ann or\
+                len(segm) == 0:
             w, h = ann["bbox"][2], ann["bbox"][3]
             if not oriented:
                 ann["ratio"] = w / h
@@ -66,7 +75,7 @@ class COCO(Base):
                 ann["ratio"] = min(w, h) / max(w, h)
             return ann
 
-        segmentations = PolygonMasks([ann["segmentation"]])
+        segmentations = PolygonMasks([segm])
         ratio = segmentations.get_ratios(oriented=oriented)[0]
         ann["ratio"] = ratio
         return ann

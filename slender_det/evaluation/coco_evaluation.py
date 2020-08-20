@@ -77,7 +77,7 @@ class COCOEvaluator(Base):
         # performed using the COCO evaluation server).
         self._do_evaluation = "annotations" in self._coco_api.dataset
 
-    def evaluate(self):
+    def evaluate(self, name="coco"):
         if self._distributed:
             comm.synchronize()
             predictions = comm.gather(self._predictions, dst=0)
@@ -94,7 +94,7 @@ class COCOEvaluator(Base):
 
         if self._output_dir:
             PathManager.mkdirs(self._output_dir)
-            file_path = os.path.join(self._output_dir, "instances_predictions.pth")
+            file_path = os.path.join(self._output_dir, name, "instances_predictions.pth")
             with PathManager.open(file_path, "wb") as f:
                 torch.save(predictions, f)
 
@@ -253,7 +253,7 @@ class COCOEvaluator(Base):
                 aspect_ratios=aspect_ratios,
                 areas=areas,
                 limit=limit)
-            recalls = stats["recalls"]
+            recalls = stats.pop("recalls")
             for i, key in enumerate(areas):
                 res["AR-{}@{:d}".format(key, limit)] = recalls[:, -1, 0, i].mean() * 100
                 res["mAR-{}@{:d}".format(key, limit)] = recalls[:, :-1, 0, i].mean() * 100

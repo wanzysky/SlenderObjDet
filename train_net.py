@@ -23,9 +23,10 @@ import torch
 
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.data import MetadataCatalog, build_detection_train_loader
-from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
+from detectron2.data import MetadataCatalog
+from detectron2.engine import default_argument_parser, default_setup, hooks, launch
 from detectron2.evaluation import (
+    DatasetEvaluator,
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
     COCOPanopticEvaluator,
@@ -34,25 +35,20 @@ from detectron2.evaluation import (
     PascalVOCDetectionEvaluator,
     SemSegEvaluator,
     verify_results,
+    print_csv_format,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
 
-from slender_det.modeling import build_model
-from slender_det.data import BorderMaskMapper
+from slender_det.engine import BaseTrainer
 from slender_det.config import get_cfg
-from slender_det.evaluation.coco_evaluation_with_anchors import COCOEvaluatorWithAnchors
-from slender_det.evaluation import COCOEvaluator
+from slender_det.evaluation import COCOEvaluator, inference_on_dataset
 
 
-class Trainer(DefaultTrainer):
+class Trainer(BaseTrainer):
     """
-    We use the "DefaultTrainer" which contains pre-defined default logic for
-    standard training workflow. They may not work for you, especially if you
-    are working on a new research project. In that case you can use the cleaner
-    "SimpleTrainer", or write your own training loop. You can use
-    "tools/plain_train_net.py" as an example.
+    We use the "BaseTrainer" which contains pre-defined default logic for standard training workflow
     """
-
+    
     @classmethod
     def build_train_loader(cls, cfg):
         """
@@ -63,21 +59,7 @@ class Trainer(DefaultTrainer):
         Overwrite it if you'd like a different data loader.
         """
         return build_detection_train_loader(cfg, mapper=BorderMaskMapper(cfg))
-
-    @classmethod
-    def build_model(cls, cfg):
-        """
-        Returns:
-            torch.nn.Module:
-
-        It now calls :func:`slender_det.modeling.build_model`.
-        Overwrite it for using our own model.
-        """
-        model = build_model(cfg)
-        logger = logging.getLogger(__name__)
-        logger.info("Model:\n{}".format(model))
-        return model
-
+        
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """
@@ -127,6 +109,60 @@ class Trainer(DefaultTrainer):
         elif len(evaluator_list) == 1:
             return evaluator_list[0]
         return DatasetEvaluators(evaluator_list)
+
+    @classmethod
+    def test(cls, cfg, model, evaluators=None):
+        """
+        Args:
+            cfg (CfgNode):
+            model (nn.Module):
+            evaluators (list[DatasetEvaluator] or None): if None, will call
+                :meth:`build_evaluator`. Otherwise, must have the same length as
+                `cfg.DATASETS.TEST`.
+
+        Returns:
+            dict: a dict of result metrics
+        """
+        logger = logging.getLogger(__name__)
+        if isinstance(evaluators, DatasetEvaluator):
+            evaluators = [evaluators]
+        if evaluators is not None:
+            assert len(cfg.DATASETS.TEST) == len(evaluators), "{} != {}".format(
+                len(cfg.DATASETS.TEST), len(evaluators)
+            )
+
+        results = OrderedDict()
+        for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
+            data_loader = cls.build_test_loader(cfg, dataset_name)
+            # When evaluators are passed in as arguments,
+            # implicitly assume that evaluators can be created before data_loader.
+            if evaluators is not None:
+                evaluator = evaluators[idx]
+            else:
+                try:
+                    evaluator = cls.build_evaluator(cfg, dataset_name)
+                except NotImplementedError:
+                    logger.warn(
+                        "No evaluator found. Use `DefaultTrainer.test(evaluators=)`, "
+                        "or implement its `build_evaluator` method."
+                    )
+                    results[dataset_name] = {}
+                    continue
+            results_i = inference_on_dataset(dataset_name, model, data_loader, evaluator)
+            results[dataset_name] = results_i
+            if comm.is_main_process():
+                assert isinstance(
+                    results_i, dict
+                ), "Evaluator must return a dict on the main process. Got {} instead.".format(
+                    results_i
+                )
+                logger.info("Evaluation results for {} in csv format:".format(dataset_name))
+                print_csv_format(results_i)
+
+        if len(results) == 1:
+            results = list(results.values())[0]
+        return results
+
 
     @classmethod
     def test_with_TTA(cls, cfg, model):

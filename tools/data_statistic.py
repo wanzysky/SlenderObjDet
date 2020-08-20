@@ -1,3 +1,4 @@
+from pylab import subplots_adjust
 from functools import lru_cache
 from collections import defaultdict
 
@@ -16,20 +17,24 @@ from concern.smart_path import smart_path
 from concern.support import fig2image, between
 from concern import webcv2
 from slender_det.evaluation.coco import COCO
+from slender_det.engine import BaseTrainer
+
 from ._setup import setup
 import matplotlib
 matplotlib.use('Agg')
-from pylab import subplots_adjust
 #IMAGE_PATH = smart_path('s3://wanzhaoyi-oss/xview/raw/train_images')
+
 
 @lru_cache(maxsize=2)
 def get_image(image_id):
     image_path = IMAGE_PATH.joinpath(image_id)
     with image_path.open('rb') as reader:
         data = reader.read()
-        image = cv2.imdecode(np.fromstring(data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        image = cv2.imdecode(np.fromstring(data, dtype=np.uint8),
+                             cv2.IMREAD_UNCHANGED)
     print('loading', image_id)
     return image
+
 
 def PlotPie(dataset, ratios):
     dicts = list(DatasetCatalog.get(dataset))
@@ -39,20 +44,25 @@ def PlotPie(dataset, ratios):
     ratios_num = dict()
     for key in ratios.keys():
         ratios_num[key] = 0
-    
+
     for dic in tqdm(dicts):
         for obj in dic["annotations"]:
             ratio = COCO.compute_ratio(obj, oriented=True)["ratio"]
             for key, ratio_range in ratios.items():
                 if between(ratio, ratio_range):
                     ratios_num[key] += 1
-   
-    plt.pie(ratios_num.values(),labels=ratios_num.keys(),autopct='%1.2f%%')
+
+    plt.pie(ratios_num.values(), labels=ratios_num.keys(), autopct='%1.2f%%')
     plt.savefig("PieChart.jpg")
     return ratios_num
 
+
 def PlotPiecewiseBars(dataset, num_subfigs, sorted=False):
-    ratios = {"0-1/5": [0, 1/5], "1/5-1/3": [1/5, 1/3], "1/3-1": [1/3, 1]}
+    ratios = {
+        "0-1/5": [0, 1 / 5],
+        "1/5-1/3": [1 / 5, 1 / 3],
+        "1/3-1": [1 / 3, 1]
+    }
     dicts = list(DatasetCatalog.get(dataset))
 
     metadata = MetadataCatalog.get(dataset)
@@ -61,7 +71,7 @@ def PlotPiecewiseBars(dataset, num_subfigs, sorted=False):
     bars = dict()
     for key in ratios.keys():
         bars[key] = [0 for _ in range(len(labels))]
-    
+
     all_ratios = []
     for dic in tqdm(dicts):
         for obj in dic["annotations"]:
@@ -72,26 +82,28 @@ def PlotPiecewiseBars(dataset, num_subfigs, sorted=False):
             all_ratios.append(ratio)
     slender_ratios = [0 for _ in range(len(labels))]
     for i in range(len(labels)):
-        slender_ratios[i] = bars["0-1/5"][i] / (bars["0-1/5"][i]+bars["1/5-1/3"][i]+bars["1/3-1"][i])
+        slender_ratios[i] = bars["0-1/5"][i] / \
+            (bars["0-1/5"][i]+bars["1/5-1/3"][i]+bars["1/3-1"][i])
     slender_ratios = np.array(slender_ratios)
-    if sorted == True: 
+    if sorted == True:
         sorted_indexes = np.argsort(slender_ratios)
-    fig, axes = plt.subplots(num_subfigs,1)
+    fig, axes = plt.subplots(num_subfigs, 1)
     for fig_i in range(num_subfigs):
         if sorted == True:
-            index_range = sorted_indexes[num_thing_per_fig*fig_i:num_thing_per_fig*(fig_i+1)]
+            index_range = sorted_indexes[num_thing_per_fig *
+                                         fig_i:num_thing_per_fig * (fig_i + 1)]
         else:
-            index_range = np.arrange(num_thing_per_fig*fig_i,num_thing_per_fig*(fig_i+1))
+            index_range = np.arrange(num_thing_per_fig * fig_i,
+                                     num_thing_per_fig * (fig_i + 1))
         label = []
         for ind_i in index_range:
             label.append(labels[ind_i])
-        
+
         axes[fig_i].set_yscale("symlog")
         prev = np.zeros((len(label), ))
         for key, bar in bars.items():
             bar = np.array(bar)
-            axes[fig_i].bar(label, bar[index_range],\
-                bottom=prev, label=key)
+            axes[fig_i].bar(label, bar[index_range], bottom=prev, label=key)
             prev = prev + bar[index_range]
         axes[fig_i].legend()
         fig.set_size_inches(15, 15)
@@ -99,8 +111,16 @@ def PlotPiecewiseBars(dataset, num_subfigs, sorted=False):
     plt.savefig("barchart.jpg")
 
 
-def PlotGradientColorBars(dataset, num_subfigs, cmap, sorted=False, include_all=False):
-    ratios = {"0-1/5": [0, 1/5], "1/5-1/3": [1/5, 1/3], "1/3-1": [1/3, 1]}
+def PlotGradientColorBars(dataset,
+                          num_subfigs,
+                          cmap,
+                          sorted=False,
+                          include_all=False):
+    ratios = {
+        "0-1/5": [0, 1 / 5],
+        "1/5-1/3": [1 / 5, 1 / 3],
+        "1/3-1": [1 / 3, 1]
+    }
     dicts = list(DatasetCatalog.get(dataset))
 
     metadata = MetadataCatalog.get(dataset)
@@ -117,16 +137,17 @@ def PlotGradientColorBars(dataset, num_subfigs, cmap, sorted=False, include_all=
                     bars[key][obj["category_id"]] += 1
     slender_ratios = np.zeros(len(labels))
     num_all_ratios = np.zeros(len(labels))
-    
+
     num_slender_ratios = np.array(bars["0-1/5"])
-    
+
     for i in range(len(labels)):
-        slender_ratios[i] = bars["0-1/5"][i] / (bars["0-1/5"][i]+bars["1/5-1/3"][i]+bars["1/3-1"][i])
+        slender_ratios[i] = bars["0-1/5"][i] / \
+            (bars["0-1/5"][i]+bars["1/5-1/3"][i]+bars["1/3-1"][i])
     for key, bar in bars.items():
         num_all_ratios = num_all_ratios + np.array(bar)
-    
+
     slender_ratio_all = num_slender_ratios.sum() / num_all_ratios.sum()
-    if sorted == True: 
+    if sorted == True:
         sorted_indexes = np.argsort(slender_ratios)
         min_ratio = slender_ratios[sorted_indexes[0]]
         max_ratio = slender_ratios[sorted_indexes[-1]]
@@ -139,34 +160,45 @@ def PlotGradientColorBars(dataset, num_subfigs, cmap, sorted=False, include_all=
         num_all_ratios = np.append(num_all_ratios, num_all_ratios.sum())
         sorted_indexes = np.insert(sorted_indexes, 0, len(labels))
         labels.append('all')
-        
-    fig, axes = plt.subplots(num_subfigs,1)
-    
+
+    fig, axes = plt.subplots(num_subfigs, 1)
+
     norm = mpl.colors.Normalize(vmin=min_ratio, vmax=max_ratio)
-    subplots_adjust(left=0.15, bottom=0.1, right=0.9, top=0.9, wspace=0, hspace=0.6)
+    subplots_adjust(left=0.15,
+                    bottom=0.1,
+                    right=0.9,
+                    top=0.9,
+                    wspace=0,
+                    hspace=0.6)
     num_thing_per_fig = len(labels) // num_subfigs
     for fig_i in range(num_subfigs):
         start = num_thing_per_fig * fig_i
-        end = num_thing_per_fig*(fig_i+1)
-        
-        if fig_i == num_subfigs-1:
+        end = num_thing_per_fig * (fig_i + 1)
+
+        if fig_i == num_subfigs - 1:
             end = len(labels)
         index_range = sorted_indexes[start:end]
-        
+
         label = []
         for ind_i in index_range:
             label.append(labels[ind_i])
-        
+
         axes[fig_i].set_yscale("symlog")
         prev = np.zeros((len(label), ))
         bar_colors = [cmap(norm(x)) for x in slender_ratios[index_range]]
-        axes[fig_i].bar(label, num_all_ratios[index_range],\
-                bottom=prev, color=bar_colors, edgecolor=(0,0,0))
+        axes[fig_i].bar(label,
+                        num_all_ratios[index_range],
+                        bottom=prev,
+                        color=bar_colors,
+                        edgecolor=(0, 0, 0))
         axes[fig_i].set_xticklabels(label, rotation="vertical")
     fig.set_size_inches(12, 12)
-    position=fig.add_axes([0., 0.1, 0.03, 0.8])       
-    fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax=position, orientation='vertical')
-    plt.savefig("barchart.png") 
+    position = fig.add_axes([0., 0.1, 0.03, 0.8])
+    fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+                 cax=position,
+                 orientation='vertical')
+    plt.savefig("barchart.png")
+
 
 def PlotAll(dataset):
 
@@ -174,12 +206,16 @@ def PlotAll(dataset):
 
     metadata = MetadataCatalog.get(dataset)
     labels = metadata.thing_classes
-    ratios = {"0-1/5": [0, 1/5], "1/5-1/3": [1/5, 1/3], "1/3-1": [1/3, 1]}
-    # ratios = {"1/3-1": [1/3, 1], "1/5-1/3": [1/5, 1/3], "0-1/5": [0, 1/5]}           
+    ratios = {
+        "0-1/5": [0, 1 / 5],
+        "1/5-1/3": [1 / 5, 1 / 3],
+        "1/3-1": [1 / 3, 1]
+    }
+
     bars = dict()
     for key in ratios.keys():
         bars[key] = [0 for _ in range(len(labels))]
-    
+
     all_ratios = []
     for dic in tqdm(dicts):
         for obj in dic["annotations"]:
@@ -188,7 +224,6 @@ def PlotAll(dataset):
                 if between(ratio, ratio_range):
                     bars[key][obj["category_id"]] += 1
             all_ratios.append(ratio)
-    
 
     fig, ax = plt.subplots()
     ax.set_yscale("symlog")
@@ -201,8 +236,8 @@ def PlotAll(dataset):
     fig.set_size_inches(18.5, 10.5)
     ax.set_xticklabels(labels, rotation="vertical")
     group = fig2image(fig)
-    cv2.imwrite('./group.png',group)
-    #webcv2.imshow("group", group)
+    # cv2.imwrite('./group.png', group)
+    webcv2.imshow("group", group)
 
     fig, ax = plt.subplots()
     all_ratios = sorted(all_ratios)
@@ -219,18 +254,19 @@ def PlotAll(dataset):
 
     ax.plot(np.arange(0, 1, tick), np.array(numbers) / count)
     number = fig2image(fig)
-    cv2.imwrite('./number.png',number)
-    #webcv2.imshow("number", number)
-    #webcv2.waitKey()
-    
-    
+    # cv2.imwrite('./number.png', number)
+    webcv2.imshow("number", number)
+    webcv2.waitKey()
+
+
 def main():
     parser = default_argument_parser()
     args = parser.parse_args()
     cfg = setup(args)
     dataset = cfg.DATASETS.TEST[0]
-    
-    PlotGradientColorBars(dataset,3,mpl.cm.hot,True,True)
+
+    PlotAll(dataset)
+
 
 if __name__ == '__main__':
     main()

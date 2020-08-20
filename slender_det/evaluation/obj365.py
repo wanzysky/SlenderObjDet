@@ -87,7 +87,7 @@ def convert_obj365_res_to_coco_json(anns):
 
             # TODO: remove len(polygon mask) < 6
             ann['id'] = id + 1
-            ann['iscrowd'] = 0
+            ann['iscrowd'] = ann['iscrowd']
 
     info = {
         "date_created": str(datetime.datetime.now()),
@@ -167,7 +167,6 @@ def inference_on_dataset(model, data_loader, distributed=True, output_dir=None):
                     n=5,
                     name="detectron2",
                 )
-
             # Measure the time only for this worker (before the synchronization barrier)
         total_time = time.perf_counter() - start_time
         total_time_str = str(datetime.timedelta(seconds=total_time))
