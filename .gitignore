@@ -133,8 +133,8 @@ dmypy.json
 *.swo
 
 # Training results
-output
-train_log
+/output
+/train_log
 
 # Datasets
 /datasets

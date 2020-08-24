@@ -1,5 +1,5 @@
 MODEL:
-  META_ARCHITECTURE: "FCOS"
+  META_ARCHITECTURE: "FCOSV2"
   BACKBONE:
     NAME: "build_retinanet_resnet_fpn_backbone_use_p5"
   RESNETS:
@@ -19,4 +19,7 @@ SOLVER:
 
 INPUT:
   MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+
+TEST:
+  EVAL_PERIOD: 0
 VERSION: 2
