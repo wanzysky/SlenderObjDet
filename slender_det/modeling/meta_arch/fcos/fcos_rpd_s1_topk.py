@@ -19,11 +19,41 @@ from slender_det.modeling.backbone import build_backbone
 from slender_det.layers import Scale, iou_loss, DFConv2d
 
 from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
-    compute_locations_per_level, compute_locations, get_sample_region, \
-    compute_centerness_targets
+    compute_locations_per_level, compute_locations, get_sample_region
 from .utils import permute_and_concat_v2 as permute_and_concat
 
-
+def compute_centerness_targets(reg_targets):
+    '''
+        
+    '''
+    left_right = reg_targets[:, [0, 2]]
+    top_bottom = reg_targets[:, [1, 3]]
+    gt_ratio_1 = (reg_targets[:,0] + reg_targets[:,2]) \
+        / (reg_targets[:,1] + reg_targets[:,3])
+    gt_ratio_2 = 1 / gt_ratio_1
+    gt_ratios = torch.stack((gt_ratio_1,gt_ratio_2), dim = 1)
+    gt_ratio = gt_ratios.min(dim=1)[0]
+#    sum_lr = torch.sum(left_right, dim=1)
+#    sum_tb = torch.sum(top_bottom, dim=1)
+#    sum_lrtb = torch.stack((sum_lr,sum_tb), dim=1)
+#    _, min_inds = sum_lrtb.min(dim=1)
+#    max_lrtb = torch.stack((min_inds,1-min_inds), dim=1).bool()
+#    min_lrtb = torch.stack((1-min_inds,min_inds), dim=1).bool()
+#    sorted_left_right = torch.stack((left_right.min(dim=-1)[0], left_right.max(dim=-1)[0]), dim=1)
+#    sorted_top_bottom = torch.stack((top_bottom.min(dim=-1)[0], top_bottom.max(dim=-1)[0]), dim=1)
+#    sorted_lrtb = torch.stack((sorted_left_right, sorted_top_bottom), dim=1)
+#    ratio = sum_lrtb[min_lrtb] / sum_lrtb[max_lrtb]
+#    expand_value = (sum_lrtb[max_lrtb] - sum_lrtb[min_lrtb]) / 2 * (1 - ratio)
+#    
+#    min_sorted_lrtb = sorted_lrtb[min_lrtb]
+#    max_sorted_lrtb = sorted_lrtb[max_lrtb]
+#    expand_centerness = (min_sorted_lrtb[:,0] + expand_value) / (min_sorted_lrtb[:,1] + expand_value) * \
+#                        (max_sorted_lrtb[:,0] / max_sorted_lrtb[:,1])
+    centerness = (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * \
+                 (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+    return torch.pow(centerness, gt_ratio)
+    #return torch.sqrt(expand_centerness)
+    
 def compute_targets_for_locations(
         locations, targets, object_sizes_of_interest,
         strides, center_sampling_radius, num_classes, norm_reg_targets=False
@@ -39,7 +69,7 @@ def compute_targets_for_locations(
 
     gt_classes = []
     reg_targets = []
-    topk_per_bbox = 1
+    topk_per_bbox = 5
     topk_locations = []
     for im_i in range(len(targets)):
         targets_per_im = targets[im_i]
@@ -176,6 +206,9 @@ class FCOSRepPoints(nn.Module):
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
         box_cls, box_init, box_refine, ctr_sco = self.head(features)
+        if len(box_cls)==0:
+            print(images.tensor.shape)
+            exit()
 
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
@@ -485,6 +518,7 @@ class FCOSRepPointsHead(torch.nn.Module):
         self.centerness_on_reg = cfg.MODEL.FCOS.CENTERNESS_ON_REG
         self.use_dcn_in_tower = cfg.MODEL.FCOS.USE_DCN_IN_TOWER
         self.use_dcn_v2 = cfg.MODEL.FCOS.USE_DCN_V2
+        self.min_size_test = cfg.INPUT.MIN_SIZE_TEST
         # fmt: on
 
         cls_tower = []
@@ -651,9 +685,13 @@ class FCOSRepPointsHead(torch.nn.Module):
             pts_out_init_grad_mul = pts_out_init_grad_mul.reshape(
                 -1, 18, *pts_out_init_grad_mul.shape[-2:])
             dcn_offset = pts_out_init_grad_mul - self.dcn_base_offset
-
-            logits.append(
-                self.logits(self.deform_cls_conv(cls_features[i], dcn_offset)))
+            try:
+                logits.append(self.logits(self.deform_cls_conv(cls_features[i], dcn_offset)))
+            except:
+                print(cls_features[i].shape, dcn_offset.shape)
+                print(x[i].shape)
+                print(self.min_size_test)
+                return [],[],[],[]
             offsets_refine.append(
                 self.offsets_refine(
                     self.deform_reg_conv(reg_features[i], dcn_offset)) +

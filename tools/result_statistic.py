@@ -20,6 +20,7 @@ from slender_det.evaluation.coco import COCO
 from slender_det.config import get_cfg
 from concern.smart_path import smart_path
 
+from slender_det.data.mappers import load_image_from_oss
 
 def setup(args):
     """
@@ -96,11 +97,15 @@ def main():
     dicts = list(DatasetCatalog.get(dataset))
 
     count = 0
+    
     for dic in tqdm.tqdm(dicts):
         assert len(pred_by_image[dic["image_id"]]) == 1
 
         prediction = pred_by_image[dic["image_id"]][0]
-        img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
+        file_path = dic['file_name']
+        file_path = os.path.join(cfg.DATALOADER.OSS_ROOT, file_path)
+        img = load_image_from_oss(smart_path(file_path), format = cfg.INPUT.FORMAT)
+        #img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         prediction = create_instances(prediction, img.shape[:2])
         # Push an image
         dic["annotations"] = reconstruct_ann(dic["annotations"])

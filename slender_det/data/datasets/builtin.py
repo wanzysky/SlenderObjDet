@@ -7,7 +7,6 @@ from detectron2.data.datasets.builtin_meta import _get_coco_instances_meta
 from .obj365 import load_obj365_json
 from .builtin_meta import _get_obj365_metadata
 
-
 def register_obj365_instances(name, metadata, json_file, image_root):
     assert isinstance(name, str), name
     assert isinstance(json_file, (str, os.PathLike)), json_file

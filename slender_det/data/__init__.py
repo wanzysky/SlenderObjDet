@@ -6,3 +6,4 @@ from .build import build_test_loader as build_detection_test_loader
 from . import mappers
 # ensure the builtin datasets are registered
 from . import datasets
+from . import transforms
