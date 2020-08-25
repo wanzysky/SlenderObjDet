@@ -34,7 +34,8 @@ def vis_batch_data():
     from detectron2.data.detection_utils import convert_image_to_rgb
 
     cfg = get_cfg()
-    cfg.DATASETS.TEST = ("objects365_val",)
+    cfg.DATASETS.TEST = ("coco_objects365_val_with_masks_full",)
+    # cfg.DATASETS.TEST = ("coco_2017_val",)
 
     data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
     data_iter = iter(data_loader)
@@ -49,9 +50,9 @@ def vis_batch_data():
             v_gt = Visualizer(img, None)
             v_gt = v_gt.overlay_instances(
                 boxes=dataset_dict["instances"].gt_boxes,
-                # masks=dataset_dict["instances"].gt_masks,
+                masks=dataset_dict["instances"].gt_masks,
             )
-            v_gt.save('/data/tmp/vis_coco_obj365_{}.png'.format(dataset_dict['image_id']))
+            v_gt.save('/data/tmp/vis_coco_{}.png'.format(dataset_dict['image_id']))
 
             ipdb.set_trace()
 

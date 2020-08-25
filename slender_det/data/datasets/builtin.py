@@ -43,10 +43,15 @@ def register_all_obj365(root):
         ),
         "objects365_val": (
             "objects365_raw_data/objects365/val",
-            "obj365/annotations/objects365_val_20190423.json"),
+            "obj365/annotations/objects365_val_20190423.json"
+        ),
         "coco_objects365_val_with_masks": (
             "objects365_raw_data/objects365/val-with-coco",
             "obj365/annotations/coco_obj365_slender_val_20200820.json"
+        ),
+        "coco_objects365_val_with_masks_full": (
+            "objects365_raw_data/objects365/val",
+            "obj365/annotations/coco_obj365_val_full_20200825.json"
         )
     }
     for key, (image_root, json_file) in SPILTS.items():
