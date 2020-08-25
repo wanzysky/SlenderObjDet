@@ -10,6 +10,7 @@ __all__ = [
     "ResizeLongestEdge",
 ]
 
+
 class ResizeLongestEdge(Augmentation):
     """
     Scale the shorter edge to the given size, with a limit of `max_size` on the longer edge.
@@ -17,7 +18,7 @@ class ResizeLongestEdge(Augmentation):
     """
 
     def __init__(
-        self, short_edge_length, max_size=sys.maxsize, sample_style="range", interp=Image.BILINEAR
+            self, short_edge_length, max_size=sys.maxsize, sample_style="range", interp=Image.BILINEAR
     ):
         """
         Args:

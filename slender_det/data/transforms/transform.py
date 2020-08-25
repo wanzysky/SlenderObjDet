@@ -19,6 +19,8 @@ except ImportError:
 __all__ = [
     "ResizePaddingTransform",
 ]
+
+
 class ResizePaddingTransform(Transform):
     """
     Resize the image to a target size.
@@ -47,14 +49,14 @@ class ResizePaddingTransform(Transform):
             interp_method = interp if interp is not None else self.interp
             pil_image = pil_image.resize((self.new_w, self.new_h), interp_method)
             ret = np.asarray(pil_image)
-            
-            #padding
+
+            # padding
             if self.new_h < self.min_size:
                 pad = self.min_size - self.new_h
-                ret = cv2.copyMakeBorder(ret,0,pad,0,0,cv2.BORDER_CONSTANT)
+                ret = cv2.copyMakeBorder(ret, 0, pad, 0, 0, cv2.BORDER_CONSTANT)
             elif self.new_w < self.min_size:
                 pad = self.min_size - self.new_w
-                ret = cv2.copyMakeBorder(ret,0,0,0,pad,cv2.BORDER_CONSTANT)
+                ret = cv2.copyMakeBorder(ret, 0, 0, 0, pad, cv2.BORDER_CONSTANT)
             return ret
         else:
             # PIL only supports uint8
@@ -67,14 +69,14 @@ class ResizePaddingTransform(Transform):
             img = F.interpolate(img, (self.new_h, self.new_w), mode=mode, align_corners=False)
             shape[:2] = (self.new_h, self.new_w)
             ret = img.permute(2, 3, 0, 1).view(shape).numpy()  # nchw -> hw(c)
-            
-            #padding
+
+            # padding
             if self.new_h < self.min_size:
                 pad = self.min_size - self.new_h
-                ret = cv2.copyMakeBorder(ret,0,pad,0,0,cv2.BORDER_CONSTANT)
+                ret = cv2.copyMakeBorder(ret, 0, pad, 0, 0, cv2.BORDER_CONSTANT)
             elif self.new_w < self.min_size:
                 pad = self.min_size - self.new_w
-                ret = cv2.copyMakeBorder(ret,0,0,0,pad,cv2.BORDER_CONSTANT)
+                ret = cv2.copyMakeBorder(ret, 0, 0, 0, pad, cv2.BORDER_CONSTANT)
             return ret
 
         return ret

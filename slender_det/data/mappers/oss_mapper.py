@@ -11,7 +11,6 @@ import torch
 from detectron2.data.dataset_mapper import DatasetMapper
 import detectron2.data.transforms as T
 import detectron2.data.detection_utils as utils
-import slender_det.data.detection_utils as utils_local
 
 
 def load_image_from_oss(path: s3path.S3Path, mode='rb', format=None):
@@ -34,7 +33,6 @@ def load_image_from_oss(path: s3path.S3Path, mode='rb', format=None):
 class OssMapper(DatasetMapper):
     def __init__(self, cfg, is_train=True):
         super().__init__(cfg, is_train)
-        self.augmentations = utils_local.build_augmentation(cfg, is_train)
         self.oss_root = cfg.DATALOADER.OSS_ROOT
 
     def __call__(self, dataset_dict):
@@ -56,12 +54,10 @@ class OssMapper(DatasetMapper):
             sem_seg_gt = utils.read_image(dataset_dict.pop("sem_seg_file_name"), "L").squeeze(2)
         else:
             sem_seg_gt = None
-            
+
         aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)
-        
+
         transforms = aug_input.apply_augmentations(self.augmentations)
-#        img_shape = aug_input.image.shape[0:2]
-#        assert img_shape[0]>=800 and img_shape[1]>=800, "img_shape is %s, augmentation is %s" % (str(img_shape),str(self.augmentations))
         image, sem_seg_gt = aug_input.image, aug_input.sem_seg
 
         image_shape = image.shape[:2]  # h, w

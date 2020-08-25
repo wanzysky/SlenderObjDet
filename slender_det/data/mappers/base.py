@@ -25,7 +25,6 @@ class DatasetMapper(DefaultMapper):
 
     def read_image(self, file_name):
         uods = _whether_use_oss_data_source(file_name)  # use_oss_data_source
-        print(uods, file_name)
         if uods:
             # set oss bucket name like: s3://detections/
             file_path = smart_path(os.path.join(self.oss_root, file_name))
