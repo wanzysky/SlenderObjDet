@@ -15,9 +15,69 @@ from fvcore.common.file_io import PathManager
 import detectron2.utils.comm as comm
 from detectron2.utils.comm import get_world_size, is_main_process
 from detectron2.evaluation.evaluator import inference_context
-from detectron2.evaluation.coco_evaluation import instances_to_coco_json
 from detectron2.data import MetadataCatalog
+from detectron2.structures import BoxMode
 from detectron2.utils.logger import log_every_n_seconds
+
+
+def instances_to_coco_json(instances, img_id):
+    """
+    Dump an "Instances" object to a COCO-format json that's used for evaluation.
+    Overwrite this because we need to add ground-truth crowd flag to coco json.
+
+    Args:
+        instances (Instances):
+        img_id (int): the image id
+
+    Returns:
+        list[dict]: list of json annotations in COCO format.
+    """
+    num_instance = len(instances)
+    if num_instance == 0:
+        return []
+
+    boxes = instances.pred_boxes.tensor.numpy()
+    boxes = BoxMode.convert(boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
+    boxes = boxes.tolist()
+    scores = instances.scores.tolist()
+    classes = instances.pred_classes.tolist()
+
+    has_crowd = instances.has("iscrowd")
+    if has_crowd:
+        iscrowd = instances.iscrowd.tolist()
+
+    has_mask = instances.has("pred_masks")
+    if has_mask:
+        # use RLE to encode the masks, because they are too large and takes memory
+        # since this evaluator stores outputs of the entire dataset
+        rles = [
+            maskUtils.encode(np.array(mask[:, :, None], order="F", dtype="uint8"))[0]
+            for mask in instances.pred_masks
+        ]
+        for rle in rles:
+            # "counts" is an array encoded by mask_util as a byte-stream. Python3's
+            # json writer which always produces strings cannot serialize a bytestream
+            # unless you decode it. Thankfully, utf-8 works out (which is also what
+            # the pycocotools/_mask.pyx does).
+            rle["counts"] = rle["counts"].decode("utf-8")
+
+    results = []
+    for k in range(num_instance):
+        result = {
+            "image_id": img_id,
+            "category_id": classes[k],
+            "bbox": boxes[k],
+            "score": scores[k],
+        }
+        if has_crowd:
+            result["iscrowd"] = iscrowd[k]
+        else:
+            result["iscrowd"] = 0
+
+        if has_mask:
+            result["segmentation"] = rles[k]
+        results.append(result)
+    return results
 
 
 def _convert_rle_to_polygon(segm):
@@ -149,6 +209,7 @@ def inference_on_dataset(model, data_loader, distributed=True, output_dir=None):
 
             start_compute_time = time.perf_counter()
             outputs = forward_warpper(model, inputs)
+
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time

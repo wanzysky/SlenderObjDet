@@ -69,39 +69,32 @@ class OssMapper(DatasetMapper):
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
         dataset_dict["image"] = torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1)))
-        if not self.is_train:
-            # USER: Modify this if you want to keep them for some reason.
-            dataset_dict.pop("annotations", None)
-            dataset_dict.pop("sem_seg_file_name", None)
-            return dataset_dict
 
         if "annotations" in dataset_dict:
+            # add crowd flag for each box
+            iscrowd = [getattr(obj, 'iscrowd', 0) for obj in dataset_dict["annotations"]]
+            iscrowd = torch.tensor(iscrowd, dtype=torch.int32)
+
             # USER: Implement additional transformations if you have other types of data
             annos = [
                 utils.transform_instance_annotations(obj, transforms, image_shape)
                 for obj in dataset_dict.pop("annotations")
-                # Keep crowd objects
-                # if obj.get("iscrowd", 0) == 0
             ]
-            
-            safe_annos = []
-            for obj in annos:
-                if "segmentation" in obj:
-                    safe_annos.append(obj)
-                else:
-                    obj["segmentation"] = []
-                    safe_annos.append(obj)
 
             instances = utils.annotations_to_instances(
-                safe_annos, image_shape, mask_format=self.instance_mask_format
+                annos, image_shape, mask_format=self.instance_mask_format
             )
+            # is safe to add crowd to _fields of Instance
+            # __getitem__ method will index all value in Instance._fields dict
+            instances.iscrowd = iscrowd
             # After transforms such as cropping are applied, the bounding box may no longer
             # tightly bound the object. As an example, imagine a triangle object
             # [(0,0), (2,0), (0,2)] cropped by a box [(1,0),(2,2)] (XYXY format). The tight
             # bounding box of the cropped triangle should be [(1,0),(2,1)], which is not equal to
             # the intersection of original bounding box and the cropping box.
-            if self.recompute_boxes and instances.has("gt_masks"):
-                instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
+            # For load objects365 dataset and predict mask, we skip getting bounding boxes from safe annos
+            # if self.recompute_boxes and instances.has("gt_masks"):
+            #     instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
 
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
 

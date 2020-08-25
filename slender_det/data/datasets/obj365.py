@@ -126,8 +126,8 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
 
             obj = {key: anno[key] for key in ann_keys if key in anno}
 
-            if 'iscrowd' in obj and obj['iscrowd'] == 1:
-                continue # skip crowd instance
+            # if 'iscrowd' in obj and obj['iscrowd'] == 1:
+            #     continue # skip crowd instance
 
             obj["bbox_mode"] = BoxMode.XYWH_ABS
             cat_id = obj["category_id"]

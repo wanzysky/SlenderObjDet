@@ -34,7 +34,7 @@ def vis_batch_data():
     from detectron2.data.detection_utils import convert_image_to_rgb
 
     cfg = get_cfg()
-    cfg.DATASETS.TEST = ("objects365_train",)
+    cfg.DATASETS.TEST = ("objects365_val",)
 
     data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
     data_iter = iter(data_loader)

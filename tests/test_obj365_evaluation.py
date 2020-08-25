@@ -96,13 +96,13 @@ def test_dataloader():
     from slender_det.config import get_cfg
 
     cfg = get_cfg()
-    cfg.DATASETS.TEST = ("coco_objects365_val_with_masks",)
+    cfg.DATASETS.TEST = ("objects365_val",)
 
     data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
     data_iter = iter(data_loader)
 
-    # data = next(data_iter)
-    # ipdb.set_trace()
+    data = next(data_iter)
+    ipdb.set_trace()
 
     for data in data_iter:
         for dataset_dict in data:
@@ -113,7 +113,7 @@ def test_dataloader():
                 boxes=dataset_dict["instances"].gt_boxes,
                 masks=dataset_dict["instances"].gt_masks,
             )
-            v_gt.save('/data/tmp/vis_coco_obj365_val_{}.png'.format(dataset_dict['image_id']))
+            v_gt.save('/data/tmp/vis_obj365_val_{}.png'.format(dataset_dict['image_id']))
 
             ipdb.set_trace()
 
