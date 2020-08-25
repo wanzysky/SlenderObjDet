@@ -119,8 +119,8 @@ def convert_obj365_res_to_coco_json(anns):
     print("Start convert {} annotations to coco annotation format".format(len(anns)))
     if 'bbox' in anns[0] and not anns[0]['bbox'] == []:
         for id, ann in enumerate(anns):
-            if 'scores' in ann:
-                ann.pop("scores")
+            if 'score' in ann:
+                ann.pop("score")
 
             category_id = ann['category_id']
             assert (

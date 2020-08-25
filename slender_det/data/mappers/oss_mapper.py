@@ -72,7 +72,7 @@ class OssMapper(DatasetMapper):
 
         if "annotations" in dataset_dict:
             # add crowd flag for each box
-            iscrowd = [getattr(obj, 'iscrowd', 0) for obj in dataset_dict["annotations"]]
+            iscrowd = [obj.get("iscrowd", 0) for obj in dataset_dict["annotations"]]
             iscrowd = torch.tensor(iscrowd, dtype=torch.int32)
 
             # USER: Implement additional transformations if you have other types of data

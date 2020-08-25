@@ -22,5 +22,5 @@ MODEL:
   RPN:
     POST_NMS_TOPK_TRAIN: 2000
 DATASETS:
-  # TEST: ("objects365_val",)
-  TEST: ("objects365_train",)
+   TEST: ("objects365_val",)
+#  TEST: ("objects365_train",)
