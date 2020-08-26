@@ -19,7 +19,7 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_K
 
-from slender_det.modeling.meta_arch.rpd import flat_and_concate_levels
+from slender_det.modeling.meta_arch.reppoints.rpd import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
 from slender_det.modeling.matchers.rep_matcher import rep_points_match_with_classes
 
@@ -71,7 +71,7 @@ class NearestRetinaNet(RetinaNet):
             centers_invalid = (centers[:, 0] >= image_size[1]).logical_or(
                 centers[:, 1] >= image_size[0])
 
-            objectness_label_i, bbox_label_i = rep_points_match(
+            objectness_label_i, bbox_label_i = rep_points_match_with_classes(
                 centers, strides, gt_per_image.gt_boxes, gt_per_image.gt_classes)
             objectness_label_i[centers_invalid] = -1
             gt_labels.append(objectness_label_i)

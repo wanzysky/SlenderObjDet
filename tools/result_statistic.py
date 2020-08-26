@@ -99,14 +99,16 @@ def main():
     count = 0
     
     for dic in tqdm.tqdm(dicts):
-        assert len(pred_by_image[dic["image_id"]]) == 1
-
+        #assert len(pred_by_image[dic["image_id"]]) == 1, str(dic["image_id"])
+        if len(pred_by_image[dic["image_id"]]) == 0:
+            continue
         prediction = pred_by_image[dic["image_id"]][0]
-        file_path = dic['file_name']
-        file_path = os.path.join(cfg.DATALOADER.OSS_ROOT, file_path)
-        img = load_image_from_oss(smart_path(file_path), format = cfg.INPUT.FORMAT)
+        #file_path = dic['file_name']
+        #file_path = os.path.join(cfg.DATALOADER.OSS_ROOT, file_path)
+        #img = load_image_from_oss(smart_path(file_path), format = cfg.INPUT.FORMAT)
         #img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
-        prediction = create_instances(prediction, img.shape[:2])
+        #prediction = create_instances(prediction, img.shape[:2])
+        prediction = create_instances(prediction, [800,800])
         # Push an image
         dic["annotations"] = reconstruct_ann(dic["annotations"])
         evaluator.process([dic], [{"instances": prediction}])

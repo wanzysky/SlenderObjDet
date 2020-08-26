@@ -49,14 +49,14 @@ class PointRetinaNet(RetinaNet):
 
         # Assigning init box labels.
         if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
-            from slender_det.modeling.matcher import rep_points_match_with_classes
-            self.matcher = rep_points_match_with_classes
+            from slender_det.modeling.matchers.rep_matcher import rep_points_match
+            self.matcher = rep_points_match
         elif cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'nearest_points':
-            from slender_det.modeling.matcher import nearest_point_match
+            from slender_det.modeling.matchers.rep_matcher import nearest_point_match
             self.matcher = nearest_point_match
         else:
             assert cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'inside'
-            from slender_det.modeling.matcher import inside_match
+            from slender_det.modeling.matchers.rep_matcher import inside_match
             self.matcher = inside_match
 
         # Used for matching refine box labels.

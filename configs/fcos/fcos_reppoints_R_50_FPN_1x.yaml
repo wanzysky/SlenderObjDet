@@ -9,6 +9,14 @@ MODEL:
   MASK_ON: False
 SOLVER:
   IMS_PER_BATCH: 16
-  
-#OUTPUT_DIR: ./train_log/0809_FCOS_rpd_softmax_normalized_centerness_per_box_only_reg_R_50_FPN_1x
-OUTPUT_DIR: ./train_log/0810_FCOS_rpd_R_50_FPN_1x
+DATASETS:
+  TEST: ("coco_objects365_val_with_masks",)
+
+#OUTPUT_DIR: ./train_log/0815_FCOS_rpd_s1_top5_pow_ratio_centerness_R_50_FPN_1x #fcos+reppoints+s1_top5+ratio centerness
+OUTPUT_DIR: ./train_log/0804_FCOS_rpd_s1_top5_R_50_FPN_1x #fcos+reppoints+s1_top5
+#OUTPUT_DIR: ./train_log/0814_FCOS_rpd_expand_centerness_pow_ratio_R_50_FPN_1x 
+#OUTPUT_DIR: ./train_log/0814_FCOS_rpd_ratio_conv_R_50_FPN_1x 
+#OUTPUT_DIR: ./train_log/0814_FCOS_rpd_init_with_direction_num_init_R_50_FPN_1x 
+#OUTPUT_DIR: ./train_log/0814_FCOS_rpd_init_with_direction_R_50_FPN_1x 
+#OUTPUT_DIR: ./train_log/0812_FCOS_rpd_exp_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0812_FCOS_rpd_expand_centerness_ratio_R_50_FPN_1x

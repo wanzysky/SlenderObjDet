@@ -33,6 +33,7 @@ def load_image_from_oss(path: s3path.S3Path, mode='rb', format=None):
 class OssMapper(DatasetMapper):
     def __init__(self, cfg, is_train=True):
         super().__init__(cfg, is_train)
+        self.augmentations
         self.oss_root = cfg.DATALOADER.OSS_ROOT
 
     def __call__(self, dataset_dict):

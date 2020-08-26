@@ -16,6 +16,8 @@ MODEL:
 SOLVER:
   WARMUP_FACTOR: 0.33
   IMS_PER_BATCH: 16
-
+DATASETS:
+  TEST: ("coco_objects365_val_with_masks",)
+  
 VIS_PERIOD: 1024
-OUTPUT_DIR: ./train_log/0722_9points_2bbox_retinanet_reppoints_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0703_retina_reppoints_R_50_FPN_1x
