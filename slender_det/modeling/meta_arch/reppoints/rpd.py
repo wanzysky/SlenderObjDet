@@ -77,7 +77,7 @@ class RepPointsDetector(nn.Module):
         self.vis_period = 0
 
         self.backbone = build_backbone(cfg)
-        self.transform_method = "moment"
+        self.transform_method = "minmax"
 
         if self.transform_method == "moment":
             self.moment_transfer = nn.Parameter(
