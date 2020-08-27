@@ -217,13 +217,18 @@ def PlotAll(dataset):
         bars[key] = [0 for _ in range(len(labels))]
 
     all_ratios = []
+    ratio_counts = {k: 0 for k in ratios.keys()}
     for dic in tqdm(dicts):
         for obj in dic["annotations"]:
             ratio = COCO.compute_ratio(obj, oriented=True)["ratio"]
             for key, ratio_range in ratios.items():
                 if between(ratio, ratio_range):
                     bars[key][obj["category_id"]] += 1
+                    ratio_counts[key] += 1
             all_ratios.append(ratio)
+
+    print("images", len(dicts))
+    print("counts", ratio_counts)
 
     fig, ax = plt.subplots()
     ax.set_yscale("symlog")
@@ -253,6 +258,8 @@ def PlotAll(dataset):
             numbers.append(count)
 
     ax.plot(np.arange(0, 1, tick), np.array(numbers) / count)
+    ax.set_xlabel("slenderness")
+    ax.set_title("cumulative distribution function")
     number = fig2image(fig)
     # cv2.imwrite('./number.png', number)
     webcv2.imshow("number", number)

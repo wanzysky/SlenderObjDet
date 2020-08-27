@@ -269,8 +269,8 @@ class COCOEvaluator(Base):
             res[key] = float(stats["mar"].item() * 100)
 
         print("Proposal metrics: \n" + create_small_table(res))
-        # TODO: save ar-stats by a better way
-        # res["ar-stats"] = stats
+        # stats["recalls"] = recalls
+        res["ar-stats"] = stats
         self._results["ar"] = res
 
 

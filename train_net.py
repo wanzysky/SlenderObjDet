@@ -48,7 +48,6 @@ class Trainer(BaseTrainer):
     """
     We use the "BaseTrainer" which contains pre-defined default logic for standard training workflow
     """
-
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """

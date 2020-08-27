@@ -90,10 +90,7 @@ if __name__ == "__main__":
         flag = False
         for ann in dic['annotations']:
             category = metadata.get('thing_classes')[ann['category_id']]
-            if category in interest:
-                flag = True
-        if not flag:
-            continue
+
         img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
         basename = os.path.basename(dic["file_name"])
 

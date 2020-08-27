@@ -15,6 +15,7 @@ from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.evaluation import print_csv_format
 
 from slender_det.structures.masks import PolygonMasks
+import slender_det.data
 from slender_det.evaluation.coco_evaluation import COCOEvaluator
 from slender_det.evaluation.coco import COCO
 from slender_det.config import get_cfg
@@ -81,7 +82,7 @@ def main():
     for p in predictions:
         pred_by_image[p["image_id"]].append(p)
 
-    dataset = cfg.DATASETS.TEST[0]
+    dataset = cfg.DATASETS.TEST[1]
 
     metadata = MetadataCatalog.get(dataset)
 
@@ -103,12 +104,7 @@ def main():
         if len(pred_by_image[dic["image_id"]]) == 0:
             continue
         prediction = pred_by_image[dic["image_id"]][0]
-        #file_path = dic['file_name']
-        #file_path = os.path.join(cfg.DATALOADER.OSS_ROOT, file_path)
-        #img = load_image_from_oss(smart_path(file_path), format = cfg.INPUT.FORMAT)
-        #img = cv2.imread(dic["file_name"], cv2.IMREAD_COLOR)[:, :, ::-1]
-        #prediction = create_instances(prediction, img.shape[:2])
-        prediction = create_instances(prediction, [800,800])
+        prediction = create_instances(prediction, (dic["height"], dic["width"]))
         # Push an image
         dic["annotations"] = reconstruct_ann(dic["annotations"])
         evaluator.process([dic], [{"instances": prediction}])
