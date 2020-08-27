@@ -113,7 +113,7 @@ class COCOEvaluator(Base):
                 Evaluate predictions on the given tasks.
                 Fill self._results with the metrics of the tasks.
                 """
-        self._logger.info("Preparing results for COCO format ...")
+        print("Preparing results for COCO format ...")
         coco_results = list(itertools.chain(*[x["instances"] for x in predictions]))
 
         # unmap the category ids for COCO
@@ -132,16 +132,16 @@ class COCOEvaluator(Base):
 
         if self._output_dir:
             file_path = os.path.join(self._output_dir, "coco_instances_results.json")
-            self._logger.info("Saving results to {}".format(file_path))
+            print("Saving results to {}".format(file_path))
             with PathManager.open(file_path, "w") as f:
                 f.write(json.dumps(coco_results))
                 f.flush()
 
         if not self._do_evaluation:
-            self._logger.info("Annotations are not available for evaluation.")
+            print("Annotations are not available for evaluation.")
             return
 
-        self._logger.info("Evaluating predictions ...")
+        print("Evaluating predictions ...")
         for task in sorted(tasks):
             coco_eval = (
                 _evaluate_predictions_on_coco(
@@ -185,11 +185,11 @@ class COCOEvaluator(Base):
             metric: float(coco_eval.stats[idx] * 100 if coco_eval.stats[idx] >= 0 else "nan")
             for idx, metric in enumerate(metrics)
         }
-        self._logger.info(
+        print(
             "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
         )
         if not np.isfinite(sum(results.values())):
-            self._logger.info("Note that some metrics cannot be computed.")
+            print("Note that some metrics cannot be computed.")
 
         if class_names is None or len(class_names) <= 1:
             return results
@@ -223,7 +223,7 @@ class COCOEvaluator(Base):
             headers=["category", "AP"] * (N_COLS // 2),
             numalign="left",
         )
-        self._logger.info("Per-category {} AP: \n".format(iou_type) + table)
+        print("Per-category {} AP: \n".format(iou_type) + table)
 
         results["AP-ratios"] = {"AP-" + name: ap.tolist() for name, ap in results_per_category_r}
         return results
@@ -268,7 +268,7 @@ class COCOEvaluator(Base):
             key = "mAR@{:d}".format(limit)
             res[key] = float(stats["mar"].item() * 100)
 
-        self._logger.info("Proposal metrics: \n" + create_small_table(res))
+        print("Proposal metrics: \n" + create_small_table(res))
         # stats["recalls"] = recalls
         res["ar-stats"] = stats
         self._results["ar"] = res
