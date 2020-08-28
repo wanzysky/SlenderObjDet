@@ -134,13 +134,13 @@ class ReppointsRetinaNet(nn.Module):
                 results = self.inference(logits, init_boxes, refine_boxes, images.image_sizes)
                 self.visualize_training(batched_inputs, results)
 
-            self.may_visualize_gt(
-                batched_inputs, gt_init_objectness.bool(),
-                gt_init_offsets, gt_cls, gt_refine_offsets,
-                point_centers,
-                flat_and_concate_levels(init_boxes),
-                flat_and_concate_levels(refine_boxes),
-                flat_and_concate_levels(logits))
+            # self.may_visualize_gt(
+            #     batched_inputs, gt_init_objectness.bool(),
+            #     gt_init_offsets, gt_cls, gt_refine_offsets,
+            #     point_centers,
+            #     flat_and_concate_levels(init_boxes),
+            #     flat_and_concate_levels(refine_boxes),
+            #     flat_and_concate_levels(logits))
 
             losses = self.losses(
                 flat_and_concate_levels(logits),
