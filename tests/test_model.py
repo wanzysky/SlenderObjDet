@@ -1,4 +1,5 @@
 import fire
+import ipdb
 
 import torch
 
@@ -9,36 +10,45 @@ import init_paths
 from slender_det.config import get_cfg
 from slender_det.modeling import build_model
 
-# get cfg
-cfg = get_cfg()
-cfg.merge_from_file("configs/ablation_studies/base.yaml")
-cfg.SOLVER.IMS_PER_BATCH = 2
 
-# get model
-device = torch.device("cuda")
-model = build_model(cfg).to(device)
+def test_model(cfg_file):
+    # get cfg
+    cfg = get_cfg()
+    cfg.merge_from_file(cfg_file)
+    cfg.SOLVER.IMS_PER_BATCH = 2
 
-# get batch data
-data_loader = build_detection_train_loader(cfg)
-data_loader_iter = iter(data_loader)
-data = next(data_loader_iter)
+    # get model
+    device = torch.device("cuda")
+    model = build_model(cfg).to(device)
+    ipdb.set_trace()
 
 
-def test_training():
+def test_training(cfg_file):
+    # get cfg
+    cfg = get_cfg()
+    cfg.merge_from_file(cfg_file)
+    cfg.SOLVER.IMS_PER_BATCH = 2
+
+    # get batch data
+    data_loader = build_detection_train_loader(cfg)
+    data_loader_iter = iter(data_loader)
+    data = next(data_loader_iter)
+    
+    # get model
+    device = torch.device("cuda")
+    model = build_model(cfg).to(device)
+
     model.train()
     outs = model(data[:2])
 
-    import pdb
-    pdb.set_trace()
+    ipdb.set_trace()
 
 
 def test_inference():
     model.eval()
-    # DetectionCheckpointer(model).load("/data/exps/Detectron2/05-30_focs_R_50_FPN_1x/model_0084999.pth")
     outs = model(data[:2])
 
-    import pdb
-    pdb.set_trace()
+    ipdb.set_trace()
 
 
 if __name__ == '__main__':

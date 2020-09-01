@@ -101,7 +101,7 @@ class AblationMetaArch(nn.Module):
                 At inference stage, return predicted bboxes.
         """
         if not self.training:
-            return self.head(batched_inputs)
+            return self.inference(batched_inputs)
 
         images = self.preprocess_image(batched_inputs)
         if "instances" in batched_inputs[0]:
@@ -117,7 +117,11 @@ class AblationMetaArch(nn.Module):
             gt_instances = None
 
         features = self.backbone(images.tensor)
-        features = [features[f] for f in self.in_features]
+        features = [features[f] for f in self.head.in_features]
+
+        losses = self.head(images, features, gt_instances)
+
+        return losses
 
     def inference(self, batched_inputs):
         assert not self.training
@@ -125,7 +129,8 @@ class AblationMetaArch(nn.Module):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
 
-        results = self.head(features, images)
+        results = self.head(images, features)
+        return results
 
     def preprocess_image(self, batched_inputs):
         """

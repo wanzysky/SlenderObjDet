@@ -1,6 +1,10 @@
 from typing import List, Tuple
 
+import torch
+import torch.nn as nn
+
 from detectron2.utils.registry import Registry
+from detectron2.layers import ShapeSpec, get_norm, DeformConv
 
 MEAT_HEADS_REGISTRY = Registry("META_HEADS")
 MEAT_HEADS_REGISTRY.__doc__ = """
@@ -25,6 +29,9 @@ class HeadBase(nn.Module):
         # TODO: Implement the sigmoid version first.
         # fmt: off
         self.in_channels = input_shape[0].channels
+        self.in_features = head_params.IN_FEATURES
+        self.fpn_strides = head_params.FPN_STRIDES
+
         self.num_classes = head_params.NUM_CLASSES
         self.feat_channels = head_params.FEAT_CHANNELS
         self.stacked_convs = head_params.STACK_CONVS
@@ -38,7 +45,7 @@ class HeadBase(nn.Module):
 
         cls_subnet = []
         loc_subnet = []
-        for _ in range(num_convs):
+        for i in range(self.stacked_convs):
             in_channels = self.in_channels if i == 0 else self.feat_channels
             cls_subnet.append(
                 nn.Conv2d(in_channels, self.feat_channels, kernel_size=3, stride=1, padding=1)
@@ -60,8 +67,8 @@ class HeadBase(nn.Module):
         for modules in [self.cls_subnet, self.loc_subnet]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
-                    torch.nn.init.normal_(layer.weight, mean=0, std=0.01)
-                    torch.nn.init.constant_(layer.bias, 0)
+                    nn.init.normal_(layer.weight, mean=0, std=0.01)
+                    nn.init.constant_(layer.bias, 0)
                 if isinstance(layer, nn.GroupNorm):
                     nn.init.constant_(layer.weight, 1)
                     nn.init.constant_(layer.bias, 0)

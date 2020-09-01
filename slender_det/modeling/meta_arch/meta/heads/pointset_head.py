@@ -1,5 +1,6 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import numpy as np
+import math
 
 import torch
 import torch.nn as nn
@@ -22,9 +23,9 @@ class PointSetHead(HeadBase):
         head_params = cfg.MODEL.META_ARCH
         self.num_points = head_params.NUM_POINTS
 
-        self.point_base_scale = model_params.POINT_BASE_SCALE
-        self.transform_method = model_params.TRANSFORM_METHOD
-        self.moment_mul = model_params.MOMENT_MUL
+        self.point_base_scale = head_params.POINT_BASE_SCALE
+        self.transform_method = head_params.TRANSFORM_METHOD
+        self.moment_mul = head_params.MOMENT_MUL
         if self.transform_method == 'moment':
             self.moment_transfer = nn.Parameter(data=torch.zeros(2), requires_grad=True)
         else:
@@ -35,8 +36,8 @@ class PointSetHead(HeadBase):
         self.loc_init_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
 
         # make feature adaptive layer
-        self.cls_conv, self.loc_refine_conv = self.make_featre_adaptive_layers()
-        self._make_offset()
+        self.cls_conv, self.loc_refine_conv = self.make_feature_adaptive_layers()
+        self._prepare_offset()
 
         self.cls_out = nn.Conv2d(self.feat_channels, self.num_classes, 1, 1, 0)
         self.loc_refine_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
@@ -46,9 +47,9 @@ class PointSetHead(HeadBase):
         self._init_weights()
 
     def _prepare_offset(self):
-        if self.feat_adaptive == "Unsupervised Offset":
+        if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
-        elif self.feat_adaptive == "Supervised Offset":
+        elif self.feat_adaption == "Supervised Offset":
             self.dcn_kernel = int(np.sqrt(self.num_points))
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
             dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
@@ -68,9 +69,13 @@ class PointSetHead(HeadBase):
                     nn.init.normal_(layer.weight, mean=0, std=0.01)
                     nn.init.constant_(layer.bias, 0)
 
+        if self.feat_adaption == "Unsupervised Offset":
+            nn.init.normal_(self.offset_conv.weight, mean=0, std=0.01)
+            nn.init.constant_(self.offset_conv.bias, 0)
+
         # Use prior in model initialization to improve stability
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
-        nn.init.constant_(self.cls_score.bias, bias_value)
+        nn.init.constant_(self.cls_out.bias, bias_value)
 
     def forward(
             self,
@@ -99,7 +104,11 @@ class PointSetHead(HeadBase):
         loc_outs_init = []
         loc_outs_refine = []
 
-        dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
+        if self.feat_adaption == "Supervised Offset":
+            dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
+        else:
+            dcn_base_offsets = None
+
         for l, feature in enumerate(features):
             cls_feat = feature
             loc_feat = feature
@@ -133,12 +142,12 @@ class PointSetHead(HeadBase):
 
             cls_outs.append(self.cls_out(F.relu_(cls_feat_fa)))
             if self.res_refine:
-                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
+                loc_out_refine = self.loc_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
             else:
-                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa))
+                loc_out_refine = self.loc_refine_out(F.relu_(loc_feat_fa))
             loc_outs_refine.append(loc_out_refine)
 
-        return cls_outs, reg_outs_init, reg_outs_refine
+        return cls_outs, loc_outs_init, loc_outs_refine
 
     def losses(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine, targets):
         """
@@ -162,6 +171,7 @@ class PointSetHead(HeadBase):
         """
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_outs]
         assert len(featmap_sizes) == len(center_pts[0])
+        device = center_pts[0][0].device
 
         pts_dim = 2 * self.num_points
 
@@ -189,7 +199,7 @@ class PointSetHead(HeadBase):
         pts_strides = torch.cat(pts_strides, dim=0)
 
         center_pts = [
-            torch.cat(c_pts, dim=0).to(self.device) for c_pts in center_pts
+            torch.cat(c_pts, dim=0).to(device) for c_pts in center_pts
         ]
 
         pred_cls = []

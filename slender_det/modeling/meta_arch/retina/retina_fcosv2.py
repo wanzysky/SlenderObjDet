@@ -22,11 +22,11 @@ from detectron2.modeling.meta_arch.retinanet import RetinaNet, permute_to_N_HWA_
 
 from slender_det.modeling.meta_arch.reppoints import flat_and_concate_levels
 from slender_det.modeling.grid_generator import zero_center_grid, uniform_grid
-from slender_det.modeling.meta_arch.fcos.fcosv2 import compute_locations, compute_locations_per_level, \
-    compute_centerness_targets, permute_and_concat
-from slender_det.modeling.meta_arch.fcos.fcosv2 import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, \
-    permute_to_N_HW_K
 from slender_det.layers import Scale, iou_loss, DFConv2d
+from ..fcos.utils import compute_locations, compute_locations_per_level, \
+    compute_centerness_targets, permute_and_concat
+from ..fcos.utils import INF, compute_targets_for_locations, get_num_gpus, reduce_sum, \
+    permute_to_N_HW_K
 
 __all__ = ["FCOSRetinaNet", "FCOSRetinaNetHead"]
 
