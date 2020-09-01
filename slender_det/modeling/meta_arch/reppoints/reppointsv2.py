@@ -178,8 +178,7 @@ class RepPointsV2(nn.Module):
                 processed_results.append({"instances": r})
             return processed_results
 
-    def losses(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine,
-               targets):
+    def losses(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine, targets):
         """
         Args:
             center_pts: (list[list[Tensor]]): a list of N=#image elements. Each
@@ -205,18 +204,15 @@ class RepPointsV2(nn.Module):
         pts_dim = 2 * self.num_points
 
         cls_outs = [
-            cls_out.permute(0, 2, 3, 1).reshape(cls_out.size(0), -1,
-                                                self.num_classes)
+            cls_out.permute(0, 2, 3, 1).reshape(cls_out.size(0), -1, self.num_classes)
             for cls_out in cls_outs
         ]
         pts_outs_init = [
-            pts_out_init.permute(0, 2, 3, 1).reshape(pts_out_init.size(0), -1,
-                                                     pts_dim)
+            pts_out_init.permute(0, 2, 3, 1).reshape(pts_out_init.size(0), -1, pts_dim)
             for pts_out_init in pts_outs_init
         ]
         pts_outs_refine = [
-            pts_out_refine.permute(0, 2, 3, 1).reshape(pts_out_refine.size(0),
-                                                       -1, pts_dim)
+            pts_out_refine.permute(0, 2, 3, 1).reshape(pts_out_refine.size(0), -1, pts_dim)
             for pts_out_refine in pts_outs_refine
         ]
 
@@ -562,8 +558,7 @@ class RepPointsV2(nn.Module):
                 cls_logits, pts_refine, points, pts_strides):
             bbox_pos_center = torch.cat([points_i, points_i], dim=1)
             bbox_pred = self.pts_to_bbox(pts_refine_i)
-            bbox_pred = bbox_pred * pts_strides_i.reshape(-1,
-                                                          1) + bbox_pos_center
+            bbox_pred = bbox_pred * pts_strides_i.reshape(-1, 1) + bbox_pos_center
             bbox_pred[:, 0].clamp_(min=0, max=image_size[1])
             bbox_pred[:, 1].clamp_(min=0, max=image_size[0])
             bbox_pred[:, 2].clamp_(min=0, max=image_size[1])
@@ -640,8 +635,7 @@ class RepPointsHead(nn.Module):
 
         self.dcn_kernel = int(np.sqrt(self.num_points))
         self.dcn_pad = int((self.dcn_kernel - 1) / 2)
-        dcn_base = np.arange(-self.dcn_pad,
-                             self.dcn_pad + 1).astype(np.float64)
+        dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
         dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
         dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
         dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))

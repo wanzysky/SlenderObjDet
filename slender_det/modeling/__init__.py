@@ -1,9 +1,9 @@
 from .meta_arch import (
+    build_model,
     FCOS,
     ProposalNetworkWithMasks,
     ProposalVisibleRCNN,
     RepPointsDetector,
-    build_model,
     RetinaNetWithAnchor,
     FCOSWithAnchor,
     ProposalVisibleRCNNWithAnchor,
@@ -15,6 +15,7 @@ from .meta_arch import (
     CenternessRetinaNet,
     FCOSV3,
     RepPointsCenterness,
+    AblationMetaArch,
 )
 
 from .proposal_generator import (
