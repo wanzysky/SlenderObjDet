@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 
 import torch
@@ -12,7 +12,7 @@ from detectron2.modeling.matcher import Matcher
 from detectron2.utils.events import get_event_storage
 from detectron2.layers import ShapeSpec, cat, batched_nms
 from detectron2.modeling.postprocessing import detector_postprocess
-from detectron2.structures import Boxes, Instances
+from detectron2.structures import Boxes, Instances, ImageList
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
 from .utils import permute_to_N_HWA_K
@@ -81,7 +81,12 @@ class AnchorHead(HeadBase):
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
         nn.init.constant_(self.cls_score.bias, bias_value)
 
-    def forward(self, features, gt_instances, images):
+    def forward(
+            self,
+            images: ImageList,
+            features: Dict[str, torch.Tensor],
+            gt_instances: Optional[List[Instances]] = None
+    ):
         cls_outs, loc_outs_init, loc_outs_refine = self._forward(features)
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
@@ -90,7 +95,7 @@ class AnchorHead(HeadBase):
         if self.training:
             return self.losses(anchors, cls_outs, loc_outs_init, loc_outs_refine, gt_instances)
         else:
-            results = self.inference(anchors, cls_outs, loc_outs_init, loc_outs_refine, images)
+            results = self.inference(anchors, cls_outs, loc_outs_init, loc_outs_refine, images.image_sizes)
             processed_results = []
             for results_per_image, input_per_image, image_size in zip(
                     results, batched_inputs, images.image_sizes):
@@ -138,8 +143,10 @@ class AnchorHead(HeadBase):
                 raise RuntimeError("Got {}".format(self.feat_adaption))
 
             cls_outs.append(self.cls_out(F.relu_(cls_feat_fa)))
-
-            loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
+            if self.res_refine:
+                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
+            else:
+                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa))
             loc_outs_refine.append(loc_out_refine)
 
         return cls_outs, reg_outs_init, reg_outs_refine

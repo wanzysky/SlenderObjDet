@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 
 import torch
@@ -8,7 +8,7 @@ from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 
 from detectron2.layers import ShapeSpec, get_norm, cat, batched_nms
 from detectron2.modeling.postprocessing import detector_postprocess
-from detectron2.structures import Boxes, Instances
+from detectron2.structures import Boxes, Instances, ImageList
 from slender_det.layers import iou_loss
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
@@ -75,8 +75,13 @@ class LRTBHead(HeadBase):
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
         nn.init.constant_(self.cls_score.bias, bias_value)
 
-    def forward(self, featurers, gt_instances, images):
-        cls_outs, ctn_outs, loc_outs_init, loc_outs_refine = self._forward(featurers)
+    def forward(
+            self,
+            images: ImageList,
+            features: Dict[str, torch.Tensor],
+            gt_instances: Optional[List[Instances]] = None
+    ):
+        cls_outs, ctn_outs, loc_outs_init, loc_outs_refine = self._forward(features)
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
         locations = compute_locations(shapes, self.fpn_strides, self.device)
