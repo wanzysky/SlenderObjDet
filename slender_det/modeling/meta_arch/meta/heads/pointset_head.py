@@ -520,7 +520,7 @@ class PointSetHead(HeadBase):
         for cls_logits_i, pts_refine_i, points_i, pts_strides_i in zip(
                 cls_logits, pts_refine, points, pts_strides):
             bbox_pos_center = torch.cat([points_i, points_i], dim=1)
-            bbox_pred = points_to_box(pts_refine_i, self.transform_method, self.moment_transfer, self.moment_mul)
+            bbox_pred = self.pts_to_bbox(pts_refine_i)
             bbox_pred = bbox_pred * pts_strides_i.reshape(-1, 1) + bbox_pos_center
             bbox_pred[:, 0].clamp_(min=0, max=image_size[1])
             bbox_pred[:, 1].clamp_(min=0, max=image_size[0])

@@ -140,8 +140,8 @@ _C.MODEL.META_ARCH.STACK_CONVS = 3
 _C.MODEL.META_ARCH.FEAT_CHANNELS = 256
 _C.MODEL.META_ARCH.NORM = "GN"
 
-# "None", "Unsupervised Offset", "Supervised Offset"
-_C.MODEL.META_ARCH.FEAT_ADAPTION = "None"
+# None, "Unsupervised Offset", "Supervised Offset"
+_C.MODEL.META_ARCH.FEAT_ADAPTION = None
 _C.MODEL.META_ARCH.RES_REFINE = False
 
 _C.MODEL.META_ARCH.LOC_FEAT_CHANNELS = 256
