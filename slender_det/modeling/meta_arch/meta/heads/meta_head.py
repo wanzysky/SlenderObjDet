@@ -15,7 +15,7 @@ perform per-region computation.
 The registered object will be called with `obj(cfg, input_shape)`.
 """
 
-FEAT_ADAPTION_METHODS = [None, "Unsupervised Offset", "Supervised Offset"]
+FEAT_ADAPTION_METHODS = ["Empty", "Unsupervised Offset", "Supervised Offset"]
 
 
 class HeadBase(nn.Module):
