@@ -53,7 +53,7 @@ def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
     # stores the assigned gt index of each point
     assigned_gt_inds = points.new_zeros((num_points,), dtype=torch.long)
     # stores the assigned gt dist (to this point) of each point
-    assigned_gt_dist = points.new_full((num_points,), float('inf'))
+    assigned_gt_dist = points.new_full((num_points,), float('inf'), dtype=torch.float32)
     points_range = torch.arange(points.shape[0])
 
     for idx in range(num_gts):
@@ -92,7 +92,7 @@ def rep_points_match(centers, strides, boxes, scale=4, pos_num=1):
             less_than_recorded_index]
 
     assigned_labels = assigned_gt_inds.new_zeros((num_points,))
-    pos_inds = torch.nonzero(assigned_gt_inds > 0).squeeze()
+    pos_inds = (assigned_gt_inds > 0).nonzero().squeeze()
     if pos_inds.numel() > 0:
         assigned_labels[pos_inds] = 1
 
@@ -148,7 +148,7 @@ def rep_points_match_with_classes(centers, strides, boxes, gt_labels, num_classe
     # stores the assigned gt index of each point
     assigned_gt_inds = points.new_zeros((num_points,), dtype=torch.long)
     # stores the assigned gt dist (to this point) of each point
-    assigned_gt_dist = points.new_full((num_points,), float('inf'))
+    assigned_gt_dist = points.new_full((num_points,), float('inf'), dtype=torch.float32)
     points_range = torch.arange(points.shape[0])
 
     for idx in range(num_gts):

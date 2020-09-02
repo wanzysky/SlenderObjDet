@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 from typing import List
 import copy
+=======
+from typing import List, Tuple, Optional, Dict
+>>>>>>> Add RetinNet ablation experiments
 
 import torch
 import torch.nn as nn
@@ -8,6 +12,7 @@ from detectron2.layers import ShapeSpec
 
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
+from detectron2.layers import ShapeSpec, batched_nms, cat, get_norm
 
 
 def grad_mul(tensor: torch.Tensor, weight: float):
@@ -242,3 +247,22 @@ def points_to_box(points, method="minmax", moment_transfer=None, moment_mul=1.0)
         raise ValueError
 
     return bbox
+
+def flat_and_concate_levels(tensor_list: List[torch.Tensor]):
+    """
+    Flat tensors in different spatial sizes and concat them.
+    Args:
+        tensor_list: A list of tensors with the same shape
+            in the first two dimensions(N, C, H_i, W_i).
+    Returns:
+        Concatenated tensor (N, X, C).
+    """
+    if len(tensor_list) < 1:
+        return tensor_list
+
+    N, C = tensor_list[0].shape[:2]
+    tensor_list = [t.view(N, C, -1).permute(0, 2, 1) for t in tensor_list]
+
+    return torch.cat(tensor_list, dim=1)
+
+

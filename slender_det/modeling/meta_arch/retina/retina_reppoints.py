@@ -60,7 +60,7 @@ class ReppointsRetinaNet(nn.Module):
 
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
-        self.vis_period = 1024
+        self.vis_period = 1024 * 4096
 
         # Assigning init box labels.
         if cfg.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE == 'points':
@@ -206,8 +206,8 @@ class ReppointsRetinaNet(nn.Module):
         gt_cls_target[foreground_idxs, gt_cls[foreground_idxs]] = 1
 
         self.loss_normalizer = (
-                self.loss_normalizer_momentum * self.loss_normalizer
-                + (1 - self.loss_normalizer_momentum) * num_foreground
+            self.loss_normalizer_momentum * self.loss_normalizer
+            + (1 - self.loss_normalizer_momentum) * num_foreground
         )
 
         loss_cls = sigmoid_focal_loss_jit(
@@ -309,7 +309,7 @@ class ReppointsRetinaNet(nn.Module):
             stride = self.strides[f_i]
             # HxW, 2
             grid = self.grid[:height, :width].reshape(-1, 2)
-            strides.append(torch.full((grid.shape[0],), stride, device=grid.device))
+            strides.append(torch.full((grid.shape[0],), stride, device=grid.device, dtype=torch.float32))
             point_centers.append(grid * stride)
             # point_centers.append(grid * stride)
         return point_centers, strides

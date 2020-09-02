@@ -45,6 +45,7 @@ class AblationMetaArch(nn.Module):
             pixel_std: Tuple[float],
             input_format: Optional[str] = None,
             vis_period: int = 0,
+            in_features
     ):
         super().__init__()
         self.backbone = backbone
@@ -52,6 +53,7 @@ class AblationMetaArch(nn.Module):
 
         self.input_format = input_format
         self.vis_period = vis_period
+        self.in_features = in_features
         if vis_period > 0:
             assert input_format is not None, "input_format is required for visualization!"
 
@@ -69,6 +71,7 @@ class AblationMetaArch(nn.Module):
         backbone_shape = backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in params.IN_FEATURES]
         head = build_meta_head(cfg, feature_shapes)
+        in_features = cfg.MODEL.RETINANET.IN_FEATURES
 
         return {
             "backbone": backbone,
@@ -77,6 +80,7 @@ class AblationMetaArch(nn.Module):
             "vis_period": cfg.VIS_PERIOD,
             "pixel_mean": cfg.MODEL.PIXEL_MEAN,
             "pixel_std": cfg.MODEL.PIXEL_STD,
+            "in_features": in_features
         }
 
     @property
@@ -117,11 +121,8 @@ class AblationMetaArch(nn.Module):
             gt_instances = None
 
         features = self.backbone(images.tensor)
-        features = [features[f] for f in self.head.in_features]
-        
-        losses = self.head(images, features, gt_instances)
-
-        return losses
+        features = [features[f] for f in self.in_features]
+        return self.head(images, features, gt_instances=gt_instances)
 
     def inference(self, batched_inputs):
         assert not self.training

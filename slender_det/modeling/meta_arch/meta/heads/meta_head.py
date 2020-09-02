@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 from detectron2.utils.registry import Registry
-from detectron2.layers import ShapeSpec, get_norm, DeformConv
+from detectron2.layers import ShapeSpec, get_norm, DeformConv, batched_nms, cat
 
 MEAT_HEADS_REGISTRY = Registry("META_HEADS")
 MEAT_HEADS_REGISTRY.__doc__ = """

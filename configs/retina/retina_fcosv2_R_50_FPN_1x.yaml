@@ -7,5 +7,5 @@ MODEL:
   BACKBONE:
     NAME: "build_retinanet_resnet_fpn_backbone_use_p5"
 
-VIS_PERIOD: 1024
+VIS_PERIOD: 1024000
 OUTPUT_DIR: ./train_log/0707_fcosv2_retinanet_R_50_FPN_1x
