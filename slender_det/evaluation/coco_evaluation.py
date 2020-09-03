@@ -108,11 +108,10 @@ class COCOEvaluator(Base):
         # Copy so the caller can do whatever with results
 
         if self._output_dir:
-            file_path = os.path.join(self._output_dir, name, "evaluate_metrics.json")
+            file_path = os.path.join(self._output_dir, name, "evaluate_metrics.pth")
             print("Saving evaluation metrics to {}".format(file_path))
-            with PathManager.open(file_path, "w") as f:
-                f.write(json.dumps(self._results))
-                f.flush()
+            with PathManager.open(file_path, "wb") as f:
+                torch.save(self._results, f)
 
         return copy.deepcopy(self._results)
 
