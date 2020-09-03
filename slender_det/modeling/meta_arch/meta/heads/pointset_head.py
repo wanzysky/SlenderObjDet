@@ -113,7 +113,7 @@ class PointSetHead(HeadBase):
             loc_out_init = self.loc_init_out(F.relu_(self.loc_init_conv(loc_feat)))
             loc_outs_init.append(loc_out_init)
 
-            if self.feat_adaption == "None":
+            if self.feat_adaption == "Empty":
                 cls_feat_fa = self.cls_conv(cls_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat)
             elif self.feat_adaption == "Unsupervised Offset":

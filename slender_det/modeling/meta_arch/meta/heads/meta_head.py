@@ -90,7 +90,7 @@ class HeadBase(nn.Module):
         assert self.feat_adaption in FEAT_ADAPTION_METHODS, \
             "{} {}".format(self.feat_adaption, type(self.feat_adaption))
         in_channels = self.feat_channels
-        if self.feat_adaption is None:
+        if self.feat_adaption == "Empty":
             cls_conv = nn.Conv2d(in_channels, self.feat_channels, 3, 1, 1)
             loc_conv_refine = nn.Conv2d(in_channels, self.loc_feat_channels, 3, 1, 1)
         elif self.feat_adaption == "Unsupervised Offset" or self.feat_adaption == "Supervised Offset":
