@@ -48,6 +48,7 @@ class Trainer(BaseTrainer):
     """
     We use the "BaseTrainer" which contains pre-defined default logic for standard training workflow
     """
+
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """
@@ -150,7 +151,6 @@ class Trainer(BaseTrainer):
         if len(results) == 1:
             results = list(results.values())[0]
         return results
-
 
     @classmethod
     def test_with_TTA(cls, cfg, model):
