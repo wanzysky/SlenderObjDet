@@ -48,6 +48,9 @@ class PointSetHead(HeadBase):
     def _prepare_offset(self):
         if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+        elif self.feat_adaption == "Split Unsup Offset":
+            self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+            self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
         elif self.feat_adaption == "Supervised Offset":
             self.dcn_kernel = int(np.sqrt(self.num_points))
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
@@ -71,6 +74,10 @@ class PointSetHead(HeadBase):
         if self.feat_adaption == "Unsupervised Offset":
             nn.init.normal_(self.offset_conv.weight, mean=0, std=0.01)
             nn.init.constant_(self.offset_conv.bias, 0)
+        elif self.feat_adaption == "Split Unsup Offset":
+            for l in [self.offset_conv_cls, self.offset_conv_loc]:
+                nn.init.normal_(l.weight, mean=0, std=0.01)
+                nn.init.constant_(l.bias, 0)
 
         # Use prior in model initialization to improve stability
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
@@ -121,6 +128,13 @@ class PointSetHead(HeadBase):
                 dcn_offsets = self.offset_conv(loc_feat)
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
+            elif self.feat_adaption == "Split Unsup Offset":
+                # TODO: split
+                dcn_offsets_cls = self.offset_conv_cls(loc_feat)
+                cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets_cls)
+
+                dcn_offsets_loc = self.offset_conv_loc(loc_feat)
+                loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets_loc)
             elif self.feat_adaption == "Supervised Offset":
                 # build offsets for deformable conv
                 loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
@@ -137,6 +151,7 @@ class PointSetHead(HeadBase):
                 loc_out_refine = self.loc_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
             else:
                 loc_out_refine = self.loc_refine_out(F.relu_(loc_feat_fa))
+
             loc_outs_refine.append(loc_out_refine)
 
         return cls_outs, loc_outs_init, loc_outs_refine
