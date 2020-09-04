@@ -28,16 +28,18 @@ class LRTBHead(HeadBase):
         self.name = head_params.NAME
         self.in_features = head_params.IN_FEATURES
         self.num_points = head_params.NUM_POINTS
-        assert self.num_points == 9
+        assert self.num_points == 2
 
-        self.fpn_strides = head_params.FPN_STRIDES
         self.center_sampling_radius = head_params.CENTER_SAMPLING_RADIUS
         self.norm_reg_targets = head_params.NORM_REG_TARGETS
         self.centerness_on_loc = head_params.CENTERNESS_ON_LOC
         self.iou_loss_type = head_params.IOU_LOSS_TYPE
-        
         if self.feat_adaption != "Supervised Offset":
             self.num_points = 2
+
+        self.pre_nms_thresh = head_params.PRE_NMS_THRESH
+        self.pre_nms_top_n = head_params.PRE_NMS_TOP_N
+
         # init bbox pred
         self.loc_init_conv = nn.Conv2d(self.feat_channels, self.loc_feat_channels, 3, 1, 1)
         self.loc_init_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
@@ -51,7 +53,6 @@ class LRTBHead(HeadBase):
         self.loc_refine_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
         self.scales_init = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
         self.scales_refine = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
-        
         self._init_weights()
 
     def _prepare_offset(self):
@@ -96,8 +97,7 @@ class LRTBHead(HeadBase):
         if self.training:
             return self.losses(locations, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, gt_instances)
         else:
-            results = self.inference(locations, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, images.image_sizes)
-            return results
+            return self.inference(locations, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, images.image_sizes)
 
     def _forward(self, features):
         cls_outs = []
@@ -106,7 +106,9 @@ class LRTBHead(HeadBase):
         loc_outs_refine = []
         if self.feat_adaption == "Supervised Offset":
             dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
-        #strides = [1,2,4,8,16]
+        else:
+            dcn_base_offsets = None
+
         for l, feature in enumerate(features):
             cls_feat = feature
             loc_feat = feature
@@ -115,18 +117,28 @@ class LRTBHead(HeadBase):
                 cls_feat = cls_conv(cls_feat)
             for loc_conv in self.loc_subnet:
                 loc_feat = loc_conv(loc_feat)
-            
-            loc_out_init = self.scales_init[l](self.loc_init_out(F.relu(self.loc_init_conv(loc_feat))))
-            loc_out_init_4dim = torch.cat((loc_out_init[:,0:2,:,:]*(-1),loc_out_init[:,-2:,:,:]),dim=1)
-            loc_out_init_4dim = torch.exp(loc_out_init_4dim)
-            loc_outs_init.append(loc_out_init_4dim)
 
-            if self.feat_adaption == "None":
+            # Following lines are commented, but not sure about the neccessaty
+            # loc_out_init = self.scales_init[l](self.loc_init_out(F.relu(self.loc_init_conv(loc_feat))))
+            # loc_out_init_4dim = torch.cat((loc_out_init[:,0:2,:,:]*(-1),loc_out_init[:,-2:,:,:]),dim=1)
+            # loc_out_init_4dim = torch.exp(loc_out_init_4dim)
+            # loc_outs_init.append(loc_out_init_4dim)
+
+            loc_out_init = self.scales_init[l](self.loc_init_out(F.relu(self.loc_init_conv(loc_feat))))
+            if self.norm_reg_targets:
+                loc_out_init = F.relu(loc_out_init) * self.fpn_strides[l]
+            else:
+                loc_out_init = torch.exp(loc_out_init)
+
+            loc_outs_init.append(loc_out_init)
+
+            if self.feat_adaption == "Empty":
                 cls_feat_fa = self.cls_conv(cls_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat)
             elif self.feat_adaption == "Unsupervised Offset":
                 # TODO: choose a better input info for generating offsets
                 dcn_offsets = self.offset_conv(loc_feat)
+
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
             elif self.feat_adaption == "Supervised Offset":
@@ -143,16 +155,21 @@ class LRTBHead(HeadBase):
                 raise RuntimeError("Got {}".format(self.feat_adaption))
 
             cls_outs.append(self.cls_out(F.relu(cls_feat_fa)))
-            ctn_outs.append(self.ctn_out(F.relu(cls_feat_fa)))
+            if self.centerness_on_loc:
+                ctn_outs.append(self.ctn_out(F.relu(loc_feat_fa)))
+            else:
+                ctn_outs.append(self.ctn_out(F.relu(cls_feat_fa)))
 
-            
             loc_out_refine = self.scales_refine[l](self.loc_refine_out(F.relu(loc_feat_fa)))
-            loc_out_retine_4dim = torch.cat((loc_out_refine[:,0:2,:,:]*(-1),loc_out_refine[:,-2:,:,:]),dim=1)
-            loc_out_retine_4dim = torch.exp(loc_out_retine_4dim)
+            if self.norm_reg_targets:
+                loc_out_refine = F.relu(loc_out_refine) * self.fpn_strides[l]
+            else:
+                loc_out_refine = torch.exp(loc_out_refine)
+
             if self.res_refine:
-                loc_out_retine_4dim = loc_out_retine_4dim + loc_out_init_4dim.detach()
-            
-            loc_outs_refine.append(loc_out_retine_4dim)
+                loc_out_refine = loc_out_refine + loc_out_init.detach()
+
+            loc_outs_refine.append(loc_out_refine)
 
         return cls_outs, ctn_outs, loc_outs_init, loc_outs_refine
 
@@ -233,35 +250,36 @@ class LRTBHead(HeadBase):
             )
         expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
 
-        gt_classes, loc_targets = compute_targets_for_locations(
+        gt_classes, reg_targets = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
             self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
-        return gt_classes, loc_targets
+        return gt_classes, reg_targets
 
     def inference(self, locations, box_cls, ctr_sco, box_reg_init, box_reg, image_sizes):
         results = []
 
         box_cls = [permute_to_N_HW_K(x, self.num_classes) for x in box_cls]
+        box_reg_init = [permute_to_N_HW_K(x, 4) for x in box_reg_init]
         box_reg = [permute_to_N_HW_K(x, 4) for x in box_reg]
         ctr_sco = [permute_to_N_HW_K(x, 1) for x in ctr_sco]
         # list[Tensor], one per level, each has shape (N, Hi x Wi x A, K or 4)
 
         for img_idx, image_size in enumerate(image_sizes):
             box_cls_per_image = [box_cls_per_level[img_idx] for box_cls_per_level in box_cls]
-            box_reg_init_per_image = [box_reg_init_per_level[img_idx] for box_reg_init_per_level in box_reg_init]
+            box_reg_init_per_image = [box_reg_per_level[img_idx] for box_reg_per_level in box_reg_init]
             box_reg_per_image = [box_reg_per_level[img_idx] for box_reg_per_level in box_reg]
             ctr_sco_per_image = [ctr_sco_per_level[img_idx] for ctr_sco_per_level in ctr_sco]
 
             results_per_image = self.inference_single_image(
-                locations, box_cls_per_image, box_reg_init_per_image,
-                box_reg_per_image, ctr_sco_per_image, tuple(image_size)
+                locations, box_cls_per_image, ctr_sco_per_image,
+                box_reg_init_per_image, box_reg_per_image, tuple(image_size)
             )
             results.append(results_per_image)
 
         return results
 
-    def inference_single_image(self, locations, box_cls, box_reg_init, box_reg, center_score, image_size):
+    def inference_single_image(self, locations, box_cls, center_score, box_reg_init, box_reg, image_size):
         boxes_all = []
         scores_all = []
         class_idxs_all = []
