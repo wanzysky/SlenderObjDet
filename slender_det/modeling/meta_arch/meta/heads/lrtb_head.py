@@ -13,7 +13,7 @@ from detectron2.structures import Boxes, Instances, ImageList
 from slender_det.layers import iou_loss, Scale
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
-from .utils import grad_mul, ShiftGenerator, points_to_box
+from .utils import grad_mul, lrtb_to_points
 from ...fcos.utils import compute_locations, compute_targets_for_locations, compute_centerness_targets, \
     permute_to_N_HW_K, permute_and_concat_v2, get_num_gpus, reduce_sum, INF
 
@@ -55,8 +55,11 @@ class LRTBHead(HeadBase):
     def _prepare_offset(self):
         if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+        elif self.feat_adaption == "Split Unsup Offset":
+            self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+            self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
         elif self.feat_adaption == "Supervised Offset":
-            self.dcn_kernel = int(np.sqrt(self.num_points))
+            self.dcn_kernel = 3
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
             dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
             dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
@@ -74,6 +77,18 @@ class LRTBHead(HeadBase):
                 if isinstance(layer, nn.Conv2d):
                     nn.init.normal_(layer.weight, mean=0, std=0.01)
                     nn.init.constant_(layer.bias, 0)
+
+        if self.feat_adaption == "Unsupervised Offset":
+            nn.init.normal_(self.offset_conv.weight, mean=0, std=0.01)
+            nn.init.constant_(self.offset_conv.bias, 0)
+        elif self.feat_adaption == "Split Unsup Offset":
+            for l in [self.offset_conv_cls, self.offset_conv_loc]:
+                nn.init.normal_(l.weight, mean=0, std=0.01)
+                nn.init.constant_(l.bias, 0)
+        # elif self.feat_adaption == "Supervised Offset":
+        #     for l in [self.offset_conv_cls_extend]:
+        #         nn.init.normal_(l.weight, mean=0, std=0.01)
+        #         nn.init.constant_(l.bias, 0)
 
         # Use prior in model initialization to improve stability
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
@@ -132,9 +147,18 @@ class LRTBHead(HeadBase):
 
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
+            elif self.feat_adaption == "Split Unsup Offset":
+                # TODO: split
+                dcn_offsets_cls = self.offset_conv_cls(loc_feat)
+                cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets_cls)
+
+                dcn_offsets_loc = self.offset_conv_loc(loc_feat)
+                loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets_loc)
             elif self.feat_adaption == "Supervised Offset":
                 # build offsets for deformable conv
                 loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
+                loc_out_init_grad_mul = lrtb_to_points(loc_out_init_grad_mul)
+                loc_out_init_grad_mul = loc_out_init_grad_mul / self.fpn_strides[l]
                 # TODOs: commpute offset for different methods
                 dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
                 # get adaptive feature map
