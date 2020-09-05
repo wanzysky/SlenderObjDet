@@ -59,6 +59,7 @@ class LRTBHead(HeadBase):
             self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
             self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
         elif self.feat_adaption == "Supervised Offset":
+            self.offset_conv_extend = nn.Conv2d(self.feat_channels, 14, 1, 1, 0)
             self.dcn_kernel = 3
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
             dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
@@ -85,10 +86,10 @@ class LRTBHead(HeadBase):
             for l in [self.offset_conv_cls, self.offset_conv_loc]:
                 nn.init.normal_(l.weight, mean=0, std=0.01)
                 nn.init.constant_(l.bias, 0)
-        # elif self.feat_adaption == "Supervised Offset":
-        #     for l in [self.offset_conv_cls_extend]:
-        #         nn.init.normal_(l.weight, mean=0, std=0.01)
-        #         nn.init.constant_(l.bias, 0)
+        elif self.feat_adaption == "Supervised Offset":
+            for l in [self.offset_conv_extend]:
+                nn.init.normal_(l.weight, mean=0, std=0.01)
+                nn.init.constant_(l.bias, 0)
 
         # Use prior in model initialization to improve stability
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
@@ -160,7 +161,13 @@ class LRTBHead(HeadBase):
                 loc_out_init_grad_mul = lrtb_to_points(loc_out_init_grad_mul)
                 loc_out_init_grad_mul = loc_out_init_grad_mul / self.fpn_strides[l]
                 # TODOs: commpute offset for different methods
-                dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
+                dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets[:, [0, 1, -2, -1], :, :]
+
+                extend_offsets = self.offset_conv_extend(loc_feat)
+                dcn_offsets = torch.cat(
+                    [dcn_offsets[:, 0:2, :, :], extend_offsets, dcn_offsets[:, 2:4, :, :]],
+                    dim=1
+                )
                 # get adaptive feature map
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
