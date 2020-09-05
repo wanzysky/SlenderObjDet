@@ -18,20 +18,8 @@ def grad_mul(tensor: torch.Tensor, weight: float):
 
 def lrtb_to_points(lrtb):
     l, r, t, b = torch.split(lrtb, dim=1, split_size_or_sections=1)
-    zero = torch.zeros_like(l, device=l.device)
-    points = [
-        -l, -t,
-        zero, -t,
-        r, -t,
-        -l, zero,
-        zero, zero,
-        r, zero,
-        -l, b,
-        zero, b,
-        r, b
-    ]
-    points = torch.cat(points, dim=1)
-    return points
+
+    return torch.cat([-l, -t, r, b], dim=1)
 
 
 def permute_to_N_HWA_K(tensor, K):
