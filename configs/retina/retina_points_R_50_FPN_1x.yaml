@@ -5,11 +5,13 @@ MODEL:
   RESNETS:
     DEPTH: 50
   PROPOSAL_GENERATOR:
-    NUM_POINTS: 9
+    NUM_POINTS: 2
     SAMPLE_MODE: "points"
 DATASETS:
   TEST: ("coco_objects365_val_with_masks",)
 
 VIS_PERIOD: 1024
-OUTPUT_DIR: ./train_log/0706_9points_retinanet_points_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0826_9points_retinanet_points_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0826_2points_retinanet_points_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0706_9points_retinanet_points_R_50_FPN_1x
 #OUTPUT_DIR: ./train_log/0706_2points_retinanet_points_R_50_FPN_1x

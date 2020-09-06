@@ -1,5 +1,6 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import numpy as np
+import math
 
 import torch
 import torch.nn as nn
@@ -9,21 +10,23 @@ from fvcore.nn import sigmoid_focal_loss_jit, smooth_l1_loss
 from detectron2.layers import ShapeSpec, get_norm, cat, batched_nms
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.structures import Boxes, Instances, ImageList
-from slender_det.layers import iou_loss
+from slender_det.layers import iou_loss, Scale
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
 from .utils import grad_mul, ShiftGenerator, points_to_box
-from ..fcos.utils import permute_to_N_HW_K, permute_and_concat_v2, \
+from slender_det.modeling.meta_arch.fcos.utils import permute_to_N_HW_K, permute_and_concat_v2, \
     compute_targets_for_locations, compute_centerness_targets, \
-    get_num_gpus, reduce_sum
+    get_num_gpus, reduce_sum, compute_locations, INF
 
-
+    
 @MEAT_HEADS_REGISTRY.register()
 class LRTBHead(HeadBase):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__(cfg, input_shape)
         head_params = cfg.MODEL.META_ARCH
-
+        
+        self.name = head_params.NAME
+        self.in_features = head_params.IN_FEATURES
         self.num_points = head_params.NUM_POINTS
         assert self.num_points == 9
 
@@ -31,27 +34,30 @@ class LRTBHead(HeadBase):
         self.center_sampling_radius = head_params.CENTER_SAMPLING_RADIUS
         self.norm_reg_targets = head_params.NORM_REG_TARGETS
         self.centerness_on_loc = head_params.CENTERNESS_ON_LOC
-
         self.iou_loss_type = head_params.IOU_LOSS_TYPE
-
+        
+        if self.feat_adaption != "Supervised Offset":
+            self.num_points = 2
         # init bbox pred
         self.loc_init_conv = nn.Conv2d(self.feat_channels, self.loc_feat_channels, 3, 1, 1)
         self.loc_init_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
 
         # make feature adaptive layer
-        self.cls_conv, self.loc_refine_conv = self.make_featre_adaptive_layers()
-        self._make_offset()
+        self.cls_conv, self.loc_refine_conv = self.make_feature_adaptive_layers()
+        self._prepare_offset()
 
         self.cls_out = nn.Conv2d(self.feat_channels, self.num_classes, 1, 1, 0)
         self.ctn_out = nn.Conv2d(self.feat_channels, 1, 1, 1, 0)
         self.loc_refine_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
-
+        self.scales_init = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
+        self.scales_refine = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
+        
         self._init_weights()
 
     def _prepare_offset(self):
-        if self.feat_adaptive == "Unsupervised Offset":
+        if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 3 * 3 * 2, 1, 1, 0)
-        elif self.feat_adaptive == "Supervised Offset":
+        elif self.feat_adaption == "Supervised Offset":
             self.dcn_kernel = int(np.sqrt(self.num_points))
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
             dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
@@ -64,7 +70,7 @@ class LRTBHead(HeadBase):
         # Initialization
         for modules in [
             self.loc_init_conv, self.loc_init_out, self.cls_conv,
-            self.loc_refine_conv, self.cls_out, self.loc_refine_out
+            self.loc_refine_conv, self.cls_out, self.ctn_out, self.loc_refine_out
         ]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
@@ -73,39 +79,34 @@ class LRTBHead(HeadBase):
 
         # Use prior in model initialization to improve stability
         bias_value = -(math.log((1 - self.prior_prob) / self.prior_prob))
-        nn.init.constant_(self.cls_score.bias, bias_value)
+        nn.init.constant_(self.cls_out.bias, bias_value)
 
     def forward(
             self,
             images: ImageList,
             features: Dict[str, torch.Tensor],
-            gt_instances: Optional[List[Instances]] = None
+            gt_instances: Optional[List[Instances]] = None,
+            batched_inputs = None
     ):
         cls_outs, ctn_outs, loc_outs_init, loc_outs_refine = self._forward(features)
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
-        locations = compute_locations(shapes, self.fpn_strides, self.device)
+        locations = compute_locations(shapes, self.fpn_strides, features[0].device)
 
         if self.training:
             return self.losses(locations, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, gt_instances)
         else:
-            results = self.inference(center_pts, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, images)
-            processed_results = []
-            for results_per_image, input_per_image, image_size in zip(
-                    results, batched_inputs, images.image_sizes):
-                height = input_per_image.get("height", image_size[0])
-                width = input_per_image.get("width", image_size[1])
-                r = detector_postprocess(results_per_image, height, width)
-                processed_results.append({"instances": r})
-            return processed_results
+            results = self.inference(locations, cls_outs, ctn_outs, loc_outs_init, loc_outs_refine, images.image_sizes)
+            return results
 
     def _forward(self, features):
         cls_outs = []
         ctn_outs = []
         loc_outs_init = []
         loc_outs_refine = []
-
-        dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
+        if self.feat_adaption == "Supervised Offset":
+            dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
+        #strides = [1,2,4,8,16]
         for l, feature in enumerate(features):
             cls_feat = feature
             loc_feat = feature
@@ -114,9 +115,11 @@ class LRTBHead(HeadBase):
                 cls_feat = cls_conv(cls_feat)
             for loc_conv in self.loc_subnet:
                 loc_feat = loc_conv(loc_feat)
-
-            loc_out_init = self.loc_init_out(F.relu_(self.loc_init_conv(loc_feat)))
-            loc_outs_init.append(loc_out_init[:, :4, :, :])
+            
+            loc_out_init = self.scales_init[l](self.loc_init_out(F.relu(self.loc_init_conv(loc_feat))))
+            loc_out_init_4dim = torch.cat((loc_out_init[:,0:2,:,:]*(-1),loc_out_init[:,-2:,:,:]),dim=1)
+            loc_out_init_4dim = torch.exp(loc_out_init_4dim)
+            loc_outs_init.append(loc_out_init_4dim)
 
             if self.feat_adaption == "None":
                 cls_feat_fa = self.cls_conv(cls_feat)
@@ -128,7 +131,9 @@ class LRTBHead(HeadBase):
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
             elif self.feat_adaption == "Supervised Offset":
                 # build offsets for deformable conv
-                loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
+                loc_out_init_dcn = torch.cat((loc_out_init_4dim[:,0:2,:,:]*(-1),loc_out_init[:,2:-2,:,:],loc_out_init_4dim[:,-2:,:,:]),dim=1)
+                loc_out_init_grad_mul = grad_mul(loc_out_init_dcn, self.gradient_mul)
+                #loc_out_init_grad_mul[:, 0:2, :, :] = loc_out_init_grad_mul[:, 0:2, :, :] * (-1)
                 # TODOs: commpute offset for different methods
                 dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
                 # get adaptive feature map
@@ -137,17 +142,19 @@ class LRTBHead(HeadBase):
             else:
                 raise RuntimeError("Got {}".format(self.feat_adaption))
 
-            cls_outs.append(self.cls_out(F.relu_(cls_feat_fa)))
-            ctn_outs.append(self.ctn_out(F.relu_(cls_feat_fa)))
+            cls_outs.append(self.cls_out(F.relu(cls_feat_fa)))
+            ctn_outs.append(self.ctn_out(F.relu(cls_feat_fa)))
 
+            
+            loc_out_refine = self.scales_refine[l](self.loc_refine_out(F.relu(loc_feat_fa)))
+            loc_out_retine_4dim = torch.cat((loc_out_refine[:,0:2,:,:]*(-1),loc_out_refine[:,-2:,:,:]),dim=1)
+            loc_out_retine_4dim = torch.exp(loc_out_retine_4dim)
             if self.res_refine:
-                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa)) + loc_out_init.detach()
-            else:
-                loc_out_refine = self.reg_refine_out(F.relu_(loc_feat_fa))
+                loc_out_retine_4dim = loc_out_retine_4dim + loc_out_init_4dim.detach()
+            
+            loc_outs_refine.append(loc_out_retine_4dim)
 
-            loc_outs_refine.append(loc_out_refine[:, :4, :, :])
-
-        return cls_outs, ctn_outs, reg_outs_init, reg_outs_refine
+        return cls_outs, ctn_outs, loc_outs_init, loc_outs_refine
 
     def losses(self, locations, class_logits, center_score, box_reg_init, box_reg, gt_instances):
         gt_classes, loc_targets = self.get_ground_truth(locations, gt_instances)
@@ -184,9 +191,9 @@ class LRTBHead(HeadBase):
                 reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
 
             loss_loc_init = iou_loss(
-                box_reg[foreground_idxs], loc_targets[foreground_idxs], gt_center_score,
+                box_reg_init[foreground_idxs], loc_targets[foreground_idxs], gt_center_score,
                 loss_type=self.iou_loss_type
-            ) / sum_centerness_targets_avg_per_gpu * self.loss_bbox_init_weight
+            ) / sum_centerness_targets_avg_per_gpu
 
             loss_loc_refine = iou_loss(
                 box_reg[foreground_idxs], loc_targets[foreground_idxs], gt_center_score,
@@ -197,11 +204,10 @@ class LRTBHead(HeadBase):
                 center_score[foreground_idxs], gt_center_score, reduction='sum'
             ) / num_pos_avg_per_gpu
         else:
-            loss_loc_init = box_reg[foreground_idxs].sum()
+            loss_loc_init = box_reg_init[foreground_idxs].sum()
             loss_loc_refine = box_reg[foreground_idxs].sum()
             reduce_sum(center_score[foreground_idxs].new_tensor([0.0]))
             centerness_loss = center_score[foreground_idxs].sum()
-
         return dict(
             loss_cls=cls_loss * self.loss_cls_weight,
             centerness_loss=centerness_loss * self.loss_cls_weight,
@@ -259,12 +265,12 @@ class LRTBHead(HeadBase):
         boxes_all = []
         scores_all = []
         class_idxs_all = []
-
+        
         # Iterate over every feature level
         for box_cls_i, box_reg_i, locs_i, center_score_i in zip(box_cls, box_reg, locations, center_score):
             # (HxW, C)
             box_cls_i = box_cls_i.sigmoid_()
-            keep_idxs = box_cls_i > self.pre_nms_thresh
+            keep_idxs = box_cls_i > self.score_threshold
 
             # multiply the classification scores with center scores
             box_cls_i *= center_score_i.sigmoid_()
@@ -278,7 +284,7 @@ class LRTBHead(HeadBase):
             box_reg_i = box_reg_i[box_loc_i]
             locs_i = locs_i[box_loc_i]
 
-            per_pre_nms_top_n = keep_idxs.sum().clamp(max=self.pre_nms_top_n)
+            per_pre_nms_top_n = keep_idxs.sum().clamp(max=self.topk_candidates)
             if keep_idxs.sum().item() > per_pre_nms_top_n.item():
                 box_cls_i, topk_idxs = box_cls_i.topk(per_pre_nms_top_n, sorted=False)
 
@@ -302,7 +308,7 @@ class LRTBHead(HeadBase):
         ]
 
         # Apply per-class nms for each image
-        keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_thresh)
+        keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
         keep = keep[: self.max_detections_per_image]
 
         result = Instances(image_size)

@@ -52,7 +52,7 @@ def compute_centerness_targets(reg_targets):
     centerness = (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * \
                  (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
     return torch.pow(centerness, gt_ratio)
-    #return torch.sqrt(expand_centerness)
+    #return torch.sqrt(centerness)
     
 def compute_targets_for_locations(
         locations, targets, object_sizes_of_interest,

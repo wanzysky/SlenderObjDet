@@ -3,6 +3,8 @@ import copy
 
 import torch
 import torch.nn as nn
+from typing import List, Tuple
+from detectron2.layers import ShapeSpec
 
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou

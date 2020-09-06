@@ -3,6 +3,8 @@ from .fcosv2 import FCOSV2
 from .fcoswa import FCOSWithAnchor
 from .fcos_anchor import FCOSAnchor
 from .fcosv3 import FCOSV3
+from .fcos_topk import FCOSTopK
+from . fcos_anchor import FCOSAnchor
 
 #from .fcos_rpd import FCOSRepPoints
 #from .fcos_dcn import FCOSRepPoints

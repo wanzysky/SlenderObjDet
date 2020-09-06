@@ -14,62 +14,93 @@ from detectron2.layers import ShapeSpec, batched_nms, cat
 from detectron2.modeling.postprocessing import detector_postprocess
 
 from slender_det.modeling.backbone import build_backbone
-from slender_det.layers import Scale, iou_loss, DFConv2d, anchor_iou_loss
+from slender_det.layers import Scale, iou_loss, DFConv2d
 
-from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
+from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, permute_and_concat, \
     compute_locations_per_level, compute_locations, get_sample_region, \
-    compute_centerness_targets, compute_targets_for_locations
-
-from detectron2.modeling.anchor_generator import build_anchor_generator
+    compute_centerness_targets
 
 
-def softmax(x):
-    x_exp = torch.exp(x)
-    x_sum = torch.sum(x_exp, 1)
-    return x_exp/x_sum[:,None]
-    
-    
-def get_anchor_offsets(locations, anchors, num_anchors):
-    anchors_tensor = [anchors[i].tensor for i in range(len(anchors))]
-    anchors_offsets = []
-    for i, loc_i in enumerate(locations):
-        anchors_i = anchors_tensor[i]
-        loc_i = loc_i.repeat(1,num_anchors).view(-1,2)
-        lt = loc_i - anchors_i[:,[0,1]]
-        rb = anchors_i[:,[2,3]] - loc_i
-        anchor_offset = torch.cat((lt,rb), dim=1)
-        anchors_offsets.append(anchor_offset)
-    return anchors_offsets
-    
-    
-def permute_and_concat(box_cls, box_reg, center_score, shape_cls, num_classes=80, num_anchors = 9):
-    """
-    Rearrange the tensor layout from the network output, i.e.:
-    list[Tensor]: #lvl tensors of shape (N, A x K, Hi, Wi)
-    to per-image predictions, i.e.:
-    Tensor: of shape (N x sum(Hi x Wi x A), K)
-    """
-    # for each feature level, permute the outputs to make them be in the
-    # same format as the labels. Note that the labels are computed for
-    # all feature levels concatenated, so we keep the same representation
-    # for the objectness, the box_reg and the center-ness
-    box_cls_flattened = [permute_to_N_HW_K(x, num_classes) for x in box_cls]
-    box_reg_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg]
-    center_score = [permute_to_N_HW_K(x, 1) for x in center_score]
-    shape_cls = [permute_to_N_HW_K(x, num_anchors) for x in shape_cls]
-    # concatenate on the first dimension (representing the feature levels), to
-    # take into account the way the labels were generated (with all feature maps
-    # being concatenated as well)
-    box_cls = cat(box_cls_flattened, dim=1).view(-1, num_classes)
-    box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
-    center_score = cat(center_score, dim=1).view(-1)
-    shape_cls = cat(shape_cls, dim=1).view(-1, num_anchors)
+def compute_targets_for_locations(
+        locations, targets, object_sizes_of_interest,
+        strides, center_sampling_radius, num_classes, norm_reg_targets=False
+):
+    num_points = [len(_) for _ in locations]
+    # build normalization weights before cat locations
+    norm_weights = None
+    if norm_reg_targets:
+        norm_weights = torch.cat([torch.empty(n).fill_(s) for n, s in zip(num_points, strides)])
 
-    return box_cls, box_reg, center_score, shape_cls
-    
-    
+    locations = torch.cat(locations, dim=0)
+    xs, ys = locations[:, 0], locations[:, 1]
+
+    gt_classes = []
+    reg_targets = []
+    topk_per_bbox = 5
+    topk_locations = []
+    for im_i in range(len(targets)):
+        targets_per_im = targets[im_i]
+        bboxes = targets_per_im.gt_boxes.tensor
+        gt_classes_per_im = targets_per_im.gt_classes
+        area = targets_per_im.gt_boxes.area()
+
+        l = xs[:, None] - bboxes[:, 0][None]
+        t = ys[:, None] - bboxes[:, 1][None]
+        r = bboxes[:, 2][None] - xs[:, None]
+        b = bboxes[:, 3][None] - ys[:, None]
+        reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
+
+        if center_sampling_radius > 0:
+            is_in_boxes = get_sample_region(bboxes, strides, num_points, xs, ys, radius=center_sampling_radius)
+        else:
+            # no center sampling, it will use all the locations within a ground-truth box
+            is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+
+        max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
+        # limit the regression range for each location
+        is_cared_in_the_level = \
+            (max_reg_targets_per_im >= object_sizes_of_interest[:, [0]]) & \
+            (max_reg_targets_per_im <= object_sizes_of_interest[:, [1]])
+
+        locations_to_gt_area = area[None].repeat(len(locations), 1)
+        locations_to_gt_area[is_in_boxes == 0] = INF
+        locations_to_gt_area[is_cared_in_the_level == 0] = INF
+
+        # if there are still more than one objects for a location,
+        # we choose the one with minimal area
+        locations_to_min_area, locations_to_gt_inds = locations_to_gt_area.min(dim=1)
+
+        gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
+        # NOTE: set background labels to NUM_CLASSES not 0
+        gt_classes_per_im[locations_to_min_area == INF] = num_classes
+
+        fore_ground_inds = (gt_classes_per_im >= 0) & (gt_classes_per_im != num_classes)
+        topk_locations_i = torch.zeros(len(locations_to_gt_inds), device=reg_targets_per_im.device).bool()
+        for gt_inds_i in range(len(bboxes)):
+            locations_for_gt_inds_i = (locations_to_gt_inds == gt_inds_i)
+            locations_for_gt_inds_i = locations_for_gt_inds_i & fore_ground_inds
+            pos_num_for_gt_inds_i = locations_for_gt_inds_i.sum().item()
+            if pos_num_for_gt_inds_i > topk_per_bbox:
+                reg_targets_for_gt_inds_i = reg_targets_per_im[locations_for_gt_inds_i, gt_inds_i]
+                center_score_for_gt_inds_i = compute_centerness_targets(reg_targets_for_gt_inds_i)
+                topk_score_for_gt_inds_i, inds = torch.topk(center_score_for_gt_inds_i, topk_per_bbox, sorted=False)
+                pos_topk_location_inds = locations_for_gt_inds_i.nonzero()[inds]
+                topk_locations_i[pos_topk_location_inds] = True
+            elif pos_num_for_gt_inds_i > 0:
+                topk_locations_i[locations_for_gt_inds_i.nonzero()] = True
+        topk_locations.append(topk_locations_i)
+
+        # calculate regression targets in 'fcos' type
+        reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+        if norm_reg_targets and norm_weights is not None:
+            reg_targets_per_im /= norm_weights[:, None]
+
+        gt_classes.append(gt_classes_per_im)
+        reg_targets.append(reg_targets_per_im)
+
+    return torch.stack(gt_classes), torch.stack(reg_targets), torch.stack(topk_locations)
 @META_ARCH_REGISTRY.register()
-class FCOSAnchor(nn.Module):
+class FCOSTopK(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
@@ -100,9 +131,7 @@ class FCOSAnchor(nn.Module):
 
         backbone_shape = self.backbone.output_shape()
         feature_shapes = [backbone_shape[f] for f in self.in_features]
-        self.head = FCOSAnchorHead(cfg, feature_shapes)
-        self.anchor_generator = build_anchor_generator(cfg, feature_shapes)
-        self.num_anchors = self.anchor_generator.num_cell_anchors[0]
+        self.head = FCOSHead(cfg, feature_shapes)
 
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
         self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
@@ -135,98 +164,75 @@ class FCOSAnchor(nn.Module):
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
-        anchors = self.anchor_generator(features)
-        
-        box_cls, box_reg, ctr_sco, shape_cls = self.head(features)
+        box_cls, box_reg, ctr_sco = self.head(features)
 
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
         locations = compute_locations(shapes, self.fpn_strides, self.device)
-        
-        anchor_offsets = get_anchor_offsets(locations, anchors, self.num_anchors)
-        anchor_targets = []
-        for im_i in range(len(gt_instances)):
-            anchor_offsets_cat = torch.cat(anchor_offsets, dim = 0)
-            anchor_targets.append(anchor_offsets_cat)
-        anchor_targets = torch.stack(anchor_targets)
-            
+
         if self.training:
-            gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances)
-            losses = self.losses(gt_classes, reg_targets, anchor_targets, box_cls, box_reg, ctr_sco, shape_cls)
+            gt_classes, reg_targets, topk_locations = self.get_ground_truth(locations, gt_instances)
+            losses = self.losses(gt_classes, reg_targets, box_cls, box_reg, ctr_sco, topk_locations)
 
             return losses
         else:
-            results = self.inference(locations, anchor_offsets, box_cls, box_reg, ctr_sco, shape_cls, images.image_sizes)
+            results = self.inference(locations, box_cls, box_reg, ctr_sco, images.image_sizes)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
 
-    def losses(self, gt_classes, reg_targets, anchor_targets, pred_class_logits, pred_box_reg, pred_center_score, pred_shape_logits):
-        pred_class_logits, pred_box_reg, pred_center_score, pred_shape_logits = \
-            permute_and_concat(pred_class_logits, pred_box_reg, pred_center_score, pred_shape_logits, self.num_classes)
+    def losses(self, gt_classes, reg_targets, pred_class_logits, pred_box_reg, pred_center_score, topk_locations):
+        pred_class_logits, pred_box_reg, pred_center_score = \
+            permute_and_concat(pred_class_logits, pred_box_reg, pred_center_score, self.num_classes)
         # Shapes: (N x R) and (N x R, 4), (N x R) respectively.
 
         gt_classes = gt_classes.flatten()
         reg_targets = reg_targets.view(-1, 4)
-        anchor_targets = anchor_targets.view(-1,4)
 
         foreground_idxs = (gt_classes >= 0) & (gt_classes != self.num_classes)
         pos_inds = torch.nonzero(foreground_idxs).squeeze(1)
-        
-        num_anchors = len(anchor_targets)//len(reg_targets)
-        expand_reg_targets = reg_targets.repeat(1,num_anchors).view(-1,4)
-        expand_foreground_idx = foreground_idxs[:,None].repeat(1,num_anchors).view(-1)
-        expand_pos_inds = torch.nonzero(expand_foreground_idx).squeeze(1)
-        pred_shape_logits = softmax(pred_shape_logits).view(-1)
-        
+
         num_gpus = get_num_gpus()
         # sync num_pos from all gpus
         total_num_pos = reduce_sum(pos_inds.new_tensor([pos_inds.numel()])).item()
         num_pos_avg_per_gpu = max(total_num_pos / float(num_gpus), 1.0)
-        
-        expand_total_num_pos = reduce_sum(expand_pos_inds.new_tensor([expand_pos_inds.numel()])).item()
-        expand_num_pos_avg_per_gpu = max(expand_total_num_pos / float(num_gpus), 1.0)
 
         gt_classes_target = torch.zeros_like(pred_class_logits)
-        foreground_gt_classes = gt_classes[foreground_idxs][:,None].repeat(1,num_anchors).view(-1)
-        gt_classes_target[expand_foreground_idx, foreground_gt_classes] = 1
+        gt_classes_target[foreground_idxs, gt_classes[foreground_idxs]] = 1
 
         # logits loss
         cls_loss = sigmoid_focal_loss_jit(
             pred_class_logits, gt_classes_target,
             alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, reduction="sum",
-        ) / expand_num_pos_avg_per_gpu
+        ) / num_pos_avg_per_gpu
         if pos_inds.numel() > 0:
             gt_center_score = compute_centerness_targets(reg_targets[foreground_idxs])
-            gt_center_score_for_anchors = gt_center_score[:,None].repeat(1,num_anchors).view(-1)\
-                * pred_shape_logits[expand_foreground_idx]
-
+            topk_locations = topk_locations.view(-1)
+            topk_gt_center_score = compute_centerness_targets(reg_targets[topk_locations])
             # average sum_centerness_targets from all gpus,
             # which is used to normalize centerness-weighed reg loss
             sum_centerness_targets_avg_per_gpu = \
-                reduce_sum(gt_center_score_for_anchors.sum()).item() / float(num_gpus)
+                reduce_sum(topk_gt_center_score.sum()).item() / float(num_gpus)
 
-            norm_loss, reg_loss = anchor_iou_loss(
-                pred_box_reg[expand_foreground_idx]+anchor_targets[expand_foreground_idx], \
-                    expand_reg_targets[expand_foreground_idx], gt_center_score_for_anchors,
+#            reg_loss = iou_loss(
+#                pred_box_reg[foreground_idxs], reg_targets[foreground_idxs], gt_center_score,
+#                loss_type=self.iou_loss_type
+#            ) / sum_centerness_targets_avg_per_gpu
+
+            reg_loss = iou_loss(
+                pred_box_reg[topk_locations], reg_targets[topk_locations], topk_gt_center_score,
                 loss_type=self.iou_loss_type
-            ) 
-            reg_loss = reg_loss / sum_centerness_targets_avg_per_gpu
-
+            ) / sum_centerness_targets_avg_per_gpu
+            
             centerness_loss = F.binary_cross_entropy_with_logits(
                 pred_center_score[foreground_idxs], gt_center_score, reduction='sum'
             ) / num_pos_avg_per_gpu
-            
-            shape_loss = F.binary_cross_entropy_with_logits(
-                pred_shape_logits[expand_foreground_idx], norm_loss, reduction='sum'
-            ) / expand_num_pos_avg_per_gpu
         else:
-            reg_loss = pred_box_reg[expand_foreground_idx].sum()
+            reg_loss = pred_box_reg[foreground_idxs].sum()
             reduce_sum(pred_center_score[foreground_idxs].new_tensor([0.0]))
             centerness_loss = pred_center_score[foreground_idxs].sum()
-            shape_loss = pred_shape_logits[expand_foreground_idx].sum()
 
-        return dict(cls_loss=cls_loss, reg_loss=reg_loss, centerness_loss=centerness_loss, shape_loss = shape_loss)
+        return dict(cls_loss=cls_loss, reg_loss=reg_loss, centerness_loss=centerness_loss)
 
     @torch.no_grad()
     def get_ground_truth(self, points, gt_instances):
@@ -246,52 +252,46 @@ class FCOSAnchor(nn.Module):
             )
         expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
 
-        gt_classes, reg_targets = compute_targets_for_locations(
+        gt_classes, reg_targets, topk_locations = compute_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
             self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
-        return gt_classes, reg_targets
+        return gt_classes, reg_targets, topk_locations
 
-    def inference(self, locations, anchor_offsets, box_cls, box_reg, ctr_sco, shape_cls, image_sizes):
+    def inference(self, locations, box_cls, box_reg, ctr_sco, image_sizes):
         results = []
 
         box_cls = [permute_to_N_HW_K(x, self.num_classes) for x in box_cls]
         box_reg = [permute_to_N_HW_K(x, 4) for x in box_reg]
         ctr_sco = [permute_to_N_HW_K(x, 1) for x in ctr_sco]
-        shape_cls = [permute_to_N_HW_K(x, 1) for x in shape_cls]
         # list[Tensor], one per level, each has shape (N, Hi x Wi x A, K or 4)
 
         for img_idx, image_size in enumerate(image_sizes):
             box_cls_per_image = [box_cls_per_level[img_idx] for box_cls_per_level in box_cls]
             box_reg_per_image = [box_reg_per_level[img_idx] for box_reg_per_level in box_reg]
             ctr_sco_per_image = [ctr_sco_per_level[img_idx] for ctr_sco_per_level in ctr_sco]
-            shape_cls_per_image = [shape_cls_per_level[img_idx] for shape_cls_per_level in shape_cls]
-            
+
             results_per_image = self.inference_single_image(
-                locations, anchor_offsets, box_cls_per_image, box_reg_per_image, ctr_sco_per_image, shape_cls_per_image, tuple(image_size)
+                locations, box_cls_per_image, box_reg_per_image, ctr_sco_per_image, tuple(image_size)
             )
             results.append(results_per_image)
 
         return results
 
-    def inference_single_image(self, locations, anchor_targets, box_cls, box_reg, center_score, shape_cls, image_size):
+    def inference_single_image(self, locations, box_cls, box_reg, center_score, image_size):
         boxes_all = []
         scores_all = []
         class_idxs_all = []
-        
+
         # Iterate over every feature level
-        for box_cls_i, box_reg_i, locs_i, anchor_offset_i, center_score_i, shape_cls_i \
-            in zip(box_cls, box_reg, locations, anchor_offsets, center_score, shape_cls):
-            
-            center_score_i = center_score_i[:,None].repeat(1,self.num_anchors).view(-1)
-            locs_i = locs_i.repeat(1,self.num_anchors).view(-1,2)
+        for box_cls_i, box_reg_i, locs_i, center_score_i in zip(box_cls, box_reg, locations, center_score):
             # (HxW, C)
             box_cls_i = box_cls_i.sigmoid_()
             keep_idxs = box_cls_i > self.pre_nms_thresh
 
             # multiply the classification scores with center scores
-            box_cls_i *= (center_score_i*shape_cls_i).sigmoid_()
-            
+            box_cls_i *= center_score_i.sigmoid_()
+
             box_cls_i = box_cls_i[keep_idxs]
             keep_idxs_nonzero_i = keep_idxs.nonzero()
 
@@ -300,7 +300,6 @@ class FCOSAnchor(nn.Module):
 
             box_reg_i = box_reg_i[box_loc_i]
             locs_i = locs_i[box_loc_i]
-            anchor_offset_i = anchor_offset_i[box_loc_i]
 
             per_pre_nms_top_n = keep_idxs.sum().clamp(max=self.pre_nms_top_n)
             if keep_idxs.sum().item() > per_pre_nms_top_n.item():
@@ -309,14 +308,12 @@ class FCOSAnchor(nn.Module):
                 class_i = class_i[topk_idxs]
                 box_reg_i = box_reg_i[topk_idxs]
                 locs_i = locs_i[topk_idxs]
-                anchor_offset_i = anchor_offset_i[topk_idxs]
 
             # predict boxes
             predicted_boxes = torch.stack([
-                locs_i[:, 0] - box_reg_i[:, 0] - anchor_offset_i[:,0], locs_i[:, 1] - box_reg_i[:, 1] - anchor_offset_i[:,1],
-                locs_i[:, 0] + box_reg_i[:, 2] + anchor_offset_i[:,2], locs_i[:, 1] + box_reg_i[:, 3] + anchor_offset_i[:,3],
+                locs_i[:, 0] - box_reg_i[:, 0], locs_i[:, 1] - box_reg_i[:, 1],
+                locs_i[:, 0] + box_reg_i[:, 2], locs_i[:, 1] + box_reg_i[:, 3],
             ], dim=1)
-            #predicted_boxes = locs_i + box_reg_i
             box_cls_i = torch.sqrt(box_cls_i)
 
             boxes_all.append(predicted_boxes)
@@ -364,13 +361,13 @@ class FCOSAnchor(nn.Module):
         return images
 
 
-class FCOSAnchorHead(torch.nn.Module):
+class FCOSHead(torch.nn.Module):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         """
         Arguments:
             in_channels (int): number of channels of the input feature
         """
-        super(FCOSAnchorHead, self).__init__()
+        super(FCOSHead, self).__init__()
         # TODO: Implement the sigmoid version first.
         # fmt: off
         in_channels = input_shape[0].channels
@@ -381,8 +378,7 @@ class FCOSAnchorHead(torch.nn.Module):
         self.use_dcn_in_tower = cfg.MODEL.FCOS.USE_DCN_IN_TOWER
         self.use_dcn_v2 = cfg.MODEL.FCOS.USE_DCN_V2
         # fmt: on
-        
-        num_anchors = build_anchor_generator(cfg, input_shape).num_cell_anchors[0]
+
         cls_tower = []
         bbox_tower = []
         for i in range(cfg.MODEL.FCOS.NUM_CONVS):
@@ -428,12 +424,12 @@ class FCOSAnchorHead(torch.nn.Module):
 
         self.add_module('cls_tower', nn.Sequential(*cls_tower))
         self.add_module('bbox_tower', nn.Sequential(*bbox_tower))
-        self.cls_logits = nn.Conv2d(in_channels, num_classes * num_anchors, kernel_size=3, stride=1, padding=1)
-        self.bbox_pred = nn.Conv2d(in_channels, 4 * num_anchors, kernel_size=3, stride=1, padding=1)
+        self.cls_logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
+        self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
         self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
-        self.shape_logits = nn.Conv2d(in_channels, num_anchors, kernel_size=3, stride=1, padding=1)
+
         # initialization
-        for modules in [self.cls_tower, self.bbox_tower, self.cls_logits, self.bbox_pred, self.centerness, self.shape_logits]:
+        for modules in [self.cls_tower, self.bbox_tower, self.cls_logits, self.bbox_pred, self.centerness]:
             for l in modules.modules():
                 if isinstance(l, nn.Conv2d):
                     torch.nn.init.normal_(l.weight, std=0.01)
@@ -447,7 +443,6 @@ class FCOSAnchorHead(torch.nn.Module):
         prior_prob = cfg.MODEL.FCOS.PRIOR_PROB
         bias_value = -math.log((1 - prior_prob) / prior_prob)
         torch.nn.init.constant_(self.cls_logits.bias, bias_value)
-        torch.nn.init.constant_(self.shape_logits.bias, bias_value)
 
         self.scales = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
 
@@ -455,13 +450,11 @@ class FCOSAnchorHead(torch.nn.Module):
         logits = []
         bbox_reg = []
         centerness = []
-        shape_logits = []
         for l, feature in enumerate(x):
             cls_tower = self.cls_tower(feature)
             box_tower = self.bbox_tower(feature)
 
             logits.append(self.cls_logits(cls_tower))
-            shape_logits.append(self.shape_logits(cls_tower).sigmoid_())
             if self.centerness_on_reg:
                 centerness.append(self.centerness(box_tower))
             else:
@@ -471,7 +464,5 @@ class FCOSAnchorHead(torch.nn.Module):
             if self.norm_reg_targets:
                 bbox_reg.append(F.relu(bbox_pred) * self.fpn_strides[l])
             else:
-                #bbox_reg.append(torch.exp(bbox_pred))
-                bbox_reg.append(bbox_pred)
-        return logits, bbox_reg, centerness, shape_logits
-
+                bbox_reg.append(torch.exp(bbox_pred))
+        return logits, bbox_reg, centerness

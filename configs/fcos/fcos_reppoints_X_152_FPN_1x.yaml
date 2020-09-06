@@ -1,0 +1,20 @@
+_BASE_: "Base-Fcos.yaml"
+MODEL:
+  META_ARCHITECTURE: "FCOSRepPoints"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/X-152-32x8d-IN5k.pkl"
+  RESNETS:
+    STRIDE_IN_1X1: False  # this is a C2 model
+    NUM_GROUPS: 32
+    WIDTH_PER_GROUP: 8
+    DEPTH: 152
+    DEFORM_ON_PER_STAGE: [False, True, True, True]
+  FCOS:
+    USE_DCN_V2: False
+  MASK_ON: False
+SOLVER:
+  IMS_PER_BATCH: 16
+#DATASETS:
+#  TEST: ("coco_objects365_val_with_masks",)
+
+#OUTPUT_DIR: ./train_log/0903_FCOS_rpd_s1_top5_X_152_FPN_1x #fcos+reppoints+s1_top5+ratio centerness
+OUTPUT_DIR: ./train_log/0903_FCOS_rpd_s1_top5_pow_ratio_centerness_X_152_FPN_1x #fcos+reppoints+s1_top5+ratio centerness

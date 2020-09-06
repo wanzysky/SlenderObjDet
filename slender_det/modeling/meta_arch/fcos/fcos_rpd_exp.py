@@ -133,7 +133,7 @@ class FCOSRepPoints(nn.Module):
 
             return results
 
-    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets,
+    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, \
                pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, strides):
 
         strides = strides.repeat(pred_class_logits[0].shape[0])  # [N*X]
@@ -363,9 +363,6 @@ class FCOSRepPoints(nn.Module):
         """
         # note: private function; subject to changes
         processed_results = []
-        
-        import ipdb
-        ipdb.set_trace()
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
@@ -542,13 +539,22 @@ class FCOSRepPointsHead(torch.nn.Module):
             # bbox_pred = self.scales[l](self.bbox_pred(box_tower))
             bbox_pred = self.scales[l](self.offsets_init(box_tower))
             if self.norm_reg_targets:
-                bbox_reg.append(F.relu(bbox_pred) * self.fpn_strides[l])
+                bbox_pred = F.relu(bbox_pred)
+                if self.training:
+                    bbox_reg.append(bbox_pred)
+                else:
+                    bbox_reg.append(bbox_pred * self.fpn_strides[l])
             else:
                 # bbox_reg.append(torch.exp(bbox_pred))
-
+                #exp(x)-1 for x>=0, -exp(-x)+1 for x<0, bbox_pred:[N,C=18,H,W]
+                pos_inds = bbox_pred>=0
+                neg_inds = bbox_pred<0
+                bbox_pred[pos_inds] = torch.exp(bbox_pred[pos_inds])-1
+                bbox_pred[neg_inds] = -torch.exp(-bbox_pred[neg_inds])+1
                 # not ltrb, but offset to center, including negative values.
                 bbox_reg.append(bbox_pred)
         # rep part
+        
         offsets_init = bbox_reg
 
         offsets_refine = []

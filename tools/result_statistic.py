@@ -82,7 +82,7 @@ def main():
     for p in predictions:
         pred_by_image[p["image_id"]].append(p)
 
-    dataset = cfg.DATASETS.TEST[1]
+    dataset = cfg.DATASETS.TEST[0]
 
     metadata = MetadataCatalog.get(dataset)
 
