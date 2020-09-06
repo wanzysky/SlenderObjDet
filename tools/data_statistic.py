@@ -331,7 +331,7 @@ def PlotCOCOAndCOCOPlus(datasets,
                         show_num_all_ratio[fig_i],
                         bottom=prev,
                         color=bar_colors,
-                        edgecolor=(0, 0, 0),
+                        edgecolor=(0.5,0.5,0.5,0.8),
                         width=1)
         for i,bar in enumerate(bars):
             if i%2!=0:
@@ -342,8 +342,8 @@ def PlotCOCOAndCOCOPlus(datasets,
         legend_labels = ['COCO', 'COCO+']
         hatches = ['x','\\']
         patches = []
-        patches.append(mpatches.Patch(fc='white',label="COCO",ec="black"))
-        patches.append(mpatches.Patch(fc='white',label="COCO+",ec="black",hatch='\\'))
+        patches.append(mpatches.Patch(fc='white',label="COCO",ec="grey"))
+        patches.append(mpatches.Patch(fc='white',label="COCO+",ec="grey",hatch='\\'))
         if fig_i ==0:
             axes[fig_i].legend(loc="upper center",handles=patches,prop={'size': 24},ncol=2)
     fig.set_size_inches(12, 12)
@@ -426,8 +426,8 @@ def main():
     cfg = setup(args)
     #plot coco and coco+
     datasets = cfg.DATASETS.TEST
-    cmap = cm.get_cmap('hot')
-    color_list = cmap(np.linspace(0,1,256))
+    cmap = cm.get_cmap('YlGn')
+    color_list = cmap(np.linspace(0,1,256)[::-1])
     new_color1 = color_list[:50:10]
     new_color2 = color_list[50:160:3]
     new_color3 = color_list[160::]
