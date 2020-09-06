@@ -15,11 +15,12 @@ from slender_det.layers import iou_loss, Scale
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
 from .utils import grad_mul, lrtb_to_points
 from ...fcos.utils import compute_locations, compute_targets_for_locations, compute_centerness_targets, \
-    permute_to_N_HW_K, permute_and_concat_v2, get_num_gpus, reduce_sum, INF, compute_slender_centerness_targets
+    permute_to_N_HW_K, permute_and_concat_v2, get_num_gpus, reduce_sum, INF, \
+    compute_topk_targets_for_locations, compute_slender_centerness_targets
 
 
 @MEAT_HEADS_REGISTRY.register()
-class LRTBHead(HeadBase):
+class LRTBTopkHead(HeadBase):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__(cfg, input_shape)
         head_params = cfg.MODEL.META_ARCH
@@ -195,7 +196,7 @@ class LRTBHead(HeadBase):
         return cls_outs, ctn_outs, loc_outs_init, loc_outs_refine
 
     def losses(self, locations, class_logits, center_score, box_reg_init, box_reg, gt_instances):
-        gt_classes, loc_targets = self.get_ground_truth(locations, gt_instances)
+        gt_classes, loc_targets, topk_locations = self.get_ground_truth(locations, gt_instances)
 
         class_logits, box_reg_init, box_reg, center_score = permute_and_concat_v2(
             class_logits, box_reg_init, box_reg, center_score, self.num_classes)
@@ -230,11 +231,16 @@ class LRTBHead(HeadBase):
             # which is used to normalize centerness-weighed reg loss
             sum_centerness_targets_avg_per_gpu = \
                 reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
-
+            
+            topk_locations = topk_locations.view(-1)
+            topk_gt_center_score = compute_centerness_targets(loc_targets[topk_locations])
+            sum_topk_centerness_targets_avg_per_gpu = \
+                reduce_sum(topk_gt_center_score.sum()).item() / float(num_gpus)
+                
             loss_loc_init = iou_loss(
-                box_reg_init[foreground_idxs], loc_targets[foreground_idxs], gt_center_score,
+                box_reg_init[topk_locations], loc_targets[topk_locations], topk_gt_center_score,
                 loss_type=self.iou_loss_type
-            ) / sum_centerness_targets_avg_per_gpu
+            ) / sum_topk_centerness_targets_avg_per_gpu
 
             loss_loc_refine = iou_loss(
                 box_reg[foreground_idxs], loc_targets[foreground_idxs], gt_center_score,
@@ -275,11 +281,11 @@ class LRTBHead(HeadBase):
             )
         expanded_object_sizes_of_interest = torch.cat(expanded_object_sizes_of_interest, dim=0)
 
-        gt_classes, reg_targets = compute_targets_for_locations(
+        gt_classes, reg_targets, topk_locations = compute_topk_targets_for_locations(
             points, gt_instances, expanded_object_sizes_of_interest,
             self.fpn_strides, self.center_sampling_radius, self.num_classes
         )
-        return gt_classes, reg_targets
+        return gt_classes, reg_targets, topk_locations
 
     def inference(self, locations, box_cls, ctr_sco, box_reg_init, box_reg, image_sizes):
         results = []

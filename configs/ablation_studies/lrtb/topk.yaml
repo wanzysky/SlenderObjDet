@@ -1,0 +1,9 @@
+_BASE_: "./base.yaml"
+MODEL:
+  META_ARCH:
+    NAME: "LRTBTopkHead"
+    #FEAT_ADAPTION: "Supervised Offset"
+    #SLENDER_CENTERNESS: True
+
+
+OUTPUT_DIR: ./train_log/0906_fcos_empty_top5
