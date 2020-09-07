@@ -11,26 +11,22 @@ import detectron2.data.detection_utils as utils
 from slender_det.data.utils import load_image_from_oss, build_augmentation
 
 
-#def _whether_use_oss_data_source(file_name):
-#    if "objects365" in file_name:
-#        return True
-#    else:
-#        return False
+def _whether_use_oss_data_source(file_name):
+    if "objects365" in file_name:
+        return True
+    else:
+        return False
 
 
 class DatasetMapper(DefaultMapper):
     def __init__(self, cfg, is_train: bool = True):
         super().__init__(cfg, is_train)
-        self.uods = False # use_oss_data_source
-        if 'objects365' in cfg.DATASETS.TEST[0]:
-            self.uods = True
-        if self.uods:
-            self.augmentations = build_augmentation(cfg, is_train)
+        self.augmentations = build_augmentation(cfg, is_train)
         self.oss_root = cfg.DATALOADER.OSS_ROOT
 
     def read_image(self, file_name):
-        #uods = _whether_use_oss_data_source(file_name)  # use_oss_data_source
-        if self.uods:
+        uods = _whether_use_oss_data_source(file_name)  # use_oss_data_source
+        if uods:
             # set oss bucket name like: s3://detections/
             file_path = smart_path(os.path.join(self.oss_root, file_name))
             image = load_image_from_oss(file_path, format=self.image_format)
