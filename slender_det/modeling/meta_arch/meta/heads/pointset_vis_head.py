@@ -16,7 +16,7 @@ from .utils import grad_mul, ShiftGenerator
 
 
 @MEAT_HEADS_REGISTRY.register()
-class PointSetHead(HeadBase):
+class PointSetVISHead(HeadBase):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__(cfg, input_shape)
         head_params = cfg.MODEL.META_ARCH
@@ -48,6 +48,13 @@ class PointSetHead(HeadBase):
     def _prepare_offset(self):
         if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+            self.dcn_kernel = int(np.sqrt(self.num_points))
+            self.dcn_pad = int((self.dcn_kernel - 1) / 2)
+            dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
+            dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
+            dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
+            dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
+            self.dcn_base_offset = torch.tensor(dcn_base_offset).view(1, -1, 1, 1)
         elif self.feat_adaption == "Split Unsup Offset":
             self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
             self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
@@ -89,21 +96,22 @@ class PointSetHead(HeadBase):
             features: Dict[str, torch.Tensor],
             gt_instances: Optional[List[Instances]] = None
     ):
-        cls_outs, pts_outs_init, pts_outs_refine = self._forward(features)
+        cls_outs, pts_outs_init, pts_outs_refine, fa_offsets = self._forward(features)
         center_pts = self.shift_generator(features)
 
         if self.training:
             return self.losses(center_pts, cls_outs, pts_outs_init, pts_outs_refine, gt_instances)
         else:
-            results = self.inference(center_pts, cls_outs, pts_outs_init, pts_outs_refine, images)
+            results = self.inference(center_pts, cls_outs, pts_outs_init, pts_outs_refine, fa_offsets, images)
             return results
 
     def _forward(self, features):
         cls_outs = []
         loc_outs_init = []
         loc_outs_refine = []
+        fa_offsets = []
 
-        if self.feat_adaption == "Supervised Offset":
+        if self.feat_adaption == "Supervised Offset" or self.feat_adaption == "Unsupervised Offset":
             dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
         else:
             dcn_base_offsets = None
@@ -126,6 +134,8 @@ class PointSetHead(HeadBase):
             elif self.feat_adaption == "Unsupervised Offset":
                 # TODO: choose a better input info for generating offsets
                 dcn_offsets = self.offset_conv(loc_feat)
+                fa_offsets.append(dcn_offsets + dcn_base_offsets)
+
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
             elif self.feat_adaption == "Split Unsup Offset":
@@ -136,16 +146,9 @@ class PointSetHead(HeadBase):
                 dcn_offsets_loc = self.offset_conv_loc(loc_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets_loc)
             elif self.feat_adaption == "Supervised Offset":
+                fa_offsets.append(loc_out_init)
                 # build offsets for deformable conv
                 loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
-
-                # (xy xy ... xy) to (yx yx ... yx)
-                loc_out_init_grad_mul = loc_out_init_grad_mul.reshape(
-                    loc_out_init_grad_mul.size(0),
-                    9, 2,
-                    *loc_out_init_grad_mul.shape[-2:]
-                ).flip(2)
-                loc_out_init_grad_mul = loc_out_init_grad_mul.reshape(-1, 18, *loc_out_init_grad_mul.shape[-2:])
                 # TODOs: commpute offset for different methods
                 dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
                 # get adaptive feature map
@@ -162,28 +165,9 @@ class PointSetHead(HeadBase):
 
             loc_outs_refine.append(loc_out_refine)
 
-        return cls_outs, loc_outs_init, loc_outs_refine
+        return cls_outs, loc_outs_init, loc_outs_refine, fa_offsets
 
     def losses(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine, targets):
-        """
-        Args:
-            center_pts: (list[list[Tensor]]): a list of N=#image elements. Each
-                is a list of #feature level tensors. The tensors contains
-                shifts of this image on the specific feature level.
-            cls_outs: List[Tensor], each item in list with
-                shape:[N, num_classes, H, W]
-            pts_outs_init: List[Tensor], each item in list with
-                shape:[N, num_points*2, H, W]
-            pts_outs_refine: List[Tensor], each item in list with
-            shape:[N, num_points*2, H, W]
-            targets: (list[Instances]): a list of N `Instances`s. The i-th
-                `Instances` contains the ground-truth per-instance annotations
-                for the i-th input image.
-                Specify `targets` during training only.
-        Returns:
-            dict[str:Tensor]:
-                mapping from a named loss to scalar tensor
-        """
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_outs]
         assert len(featmap_sizes) == len(center_pts[0])
 
@@ -469,7 +453,7 @@ class PointSetHead(HeadBase):
 
         return assigned_bboxes, assigned_labels
 
-    def inference(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine,
+    def inference(self, center_pts, cls_outs, pts_outs_init, pts_outs_refine, fa_offsets,
                   images):
         """
         Argumments:
@@ -495,6 +479,10 @@ class PointSetHead(HeadBase):
             x.permute(0, 2, 3, 1).reshape(x.size(0), -1, self.num_points * 2)
             for x in pts_outs_refine
         ]
+        fa_offsets = [
+            x.permute(0, 2, 3, 1).reshape(x.size(0), -1, self.num_points * 2)
+            for x in fa_offsets
+        ]
 
         pts_strides = []
         for i, s in enumerate(center_pts[0]):
@@ -510,17 +498,21 @@ class PointSetHead(HeadBase):
                 pts_outs_refine_per_level[img_idx]
                 for pts_outs_refine_per_level in pts_outs_refine
             ]
+            fa_offsets_per_img = [
+                fa_offsets_per_level[img_idx]
+                for fa_offsets_per_level in fa_offsets
+            ]
             results_per_img = self.inference_single_image(
                 cls_outs_per_img, pts_outs_refine_per_img, pts_strides,
-                center_pts_per_image, tuple(image_size))
+                center_pts_per_image, fa_offsets_per_img, tuple(image_size))
             results.append(results_per_img)
         return results
 
-    def inference_single_image(self, cls_logits, pts_refine, pts_strides, points, image_size):
+    def inference_single_image(self, cls_logits, pts_refine, pts_strides, points, fa_offsets, image_size):
         """
         Single-image inference. Return bounding-box detection results by
         thresholding on scores and applying non-maximum suppression (NMS).
-        Arguemnts:
+        Args:
             cls_logits (list[Tensor]): list of #feature levels. Each entry
                 contains tensor of size (H x W, K)
             pts_refine (list[Tensor]): Same shape as 'cls_logits' except that K
@@ -530,18 +522,21 @@ class PointSetHead(HeadBase):
             points (list[Tensor]): list of #feature levels. Each entry contains
                 a tensor, which contains all the points for that
                 image in that feature level.
+            fa_offsets (list[Tensor]):
             image_size (tuple(H, W)): a tuple of the image height and width.
         Returns:
             Same as `inference`, but only for one image
         """
-        assert len(cls_logits) == len(pts_refine) == len(pts_strides)
+        assert len(cls_logits) == len(pts_refine) == len(pts_strides) == len(fa_offsets)
         boxes_all = []
         scores_all = []
         class_idxs_all = []
+        points_all = []
+        fa_offsets_all = []
 
         # Iterate over every feature level
-        for cls_logits_i, pts_refine_i, points_i, pts_strides_i in zip(
-                cls_logits, pts_refine, points, pts_strides):
+        for cls_logits_i, pts_refine_i, points_i, fa_offsets_i, pts_strides_i in zip(
+                cls_logits, pts_refine, points, fa_offsets, pts_strides):
             bbox_pos_center = torch.cat([points_i, points_i], dim=1)
             bbox_pred = self.pts_to_bbox(pts_refine_i)
             bbox_pred = bbox_pred * pts_strides_i.reshape(-1, 1) + bbox_pos_center
@@ -549,6 +544,8 @@ class PointSetHead(HeadBase):
             bbox_pred[:, 1].clamp_(min=0, max=image_size[0])
             bbox_pred[:, 2].clamp_(min=0, max=image_size[1])
             bbox_pred[:, 3].clamp_(min=0, max=image_size[0])
+
+            offsets_pred = fa_offsets_i * pts_strides_i.reshape(-1, 1)
 
             # (HxWxK, )
             point_cls_i = cls_logits_i.flatten().sigmoid_()
@@ -569,13 +566,17 @@ class PointSetHead(HeadBase):
             classes_idxs = topk_idxs % self.num_classes
 
             predicted_boxes = bbox_pred[point_idxs]
+            predicted_points = points_i[point_idxs]
+            predicted_offsets = offsets_pred[point_idxs]
 
             boxes_all.append(predicted_boxes)
             scores_all.append(predicted_prob)
             class_idxs_all.append(classes_idxs)
+            points_all.append(predicted_points)
+            fa_offsets_all.append(predicted_offsets)
 
-        boxes_all, scores_all, class_idxs_all = [
-            cat(x) for x in [boxes_all, scores_all, class_idxs_all]
+        boxes_all, scores_all, class_idxs_all, points_all, fa_offsets_all = [
+            cat(x) for x in [boxes_all, scores_all, class_idxs_all, points_all, fa_offsets_all]
         ]
 
         keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
@@ -585,5 +586,7 @@ class PointSetHead(HeadBase):
         result.pred_boxes = Boxes(boxes_all[keep])
         result.scores = scores_all[keep]
         result.pred_classes = class_idxs_all[keep]
+        result.pred_points = points_all[keep]
+        result.pred_offsets = fa_offsets_all[keep]
 
         return result
