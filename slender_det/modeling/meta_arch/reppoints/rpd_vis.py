@@ -78,6 +78,7 @@ class RepPointsVISDetector(nn.Module):
 
         self.backbone = build_backbone(cfg)
         self.transform_method = "minmax"
+        # self.transform_method = "moment"
 
         if self.transform_method == "moment":
             self.moment_transfer = nn.Parameter(
@@ -271,6 +272,33 @@ class RepPointsVISDetector(nn.Module):
 
             bboxes.append(bbox)
         return bboxes
+
+    def points2offsets(self, base_grids: List[torch.Tensor], deltas: List[torch.Tensor], point_strides=[1, 1, 1, 1, 1]):
+        '''
+            Args:
+                base_grids: List[[H*W,2]] coordinate of each feature map
+                deltas: List[[N,C,H,W]] offsets
+            Returns:
+                bboxes: List[[N,4,H,W]]
+        '''
+        offsets = []
+        # For each level
+        for i, delta in enumerate(deltas):
+            """
+            delta: (N, C, H_i, W_i),
+            C=4 or 18 
+            """
+            N, C, H_i, W_i = delta.shape
+            # (1, 2, H_i, W_i), grid for this feature level.
+            base_grid = base_grids[i].view(1, H_i, W_i, 2).permute(0, 3, 1, 2)
+
+            # (N*C/2, 2, H_i, W_i)
+            delta = delta.view(-1, C // 2, 2, H_i, W_i).view(-1, 2, H_i, W_i)
+            # (N, C/2, 2, H_i, W_i)
+            points = (delta * point_strides[i] + base_grid).reshape(-1, C, H_i, W_i)
+            offsets.append(points)
+
+        return offsets
 
     @torch.no_grad()
     def get_ground_truth(self, centers: torch.Tensor, strides, init_boxes, gt_instances):
@@ -648,6 +676,7 @@ class RepPointsVISDetector(nn.Module):
         init_boxes = self.points2bbox(point_centers, offsets_init, [1, 2, 4, 8, 16])
         refine_boxes = self.points2bbox(point_centers, offsets_refine, [1, 2, 4, 8, 16])
         fa_offsets = [fa_offset * stride for fa_offset, stride in zip(fa_offsets, [1, 2, 4, 8, 16])]
+        refine_points = self.points2offsets(point_centers, offsets_refine, [1, 2, 4, 8, 16])
 
         if self.training:
             point_centers = torch.cat(point_centers, 0)
@@ -668,10 +697,15 @@ class RepPointsVISDetector(nn.Module):
 
             return losses
         else:
-            results = self.inference(logits, init_boxes, refine_boxes, fa_offsets, point_centers, images.image_sizes)
+            results = self.inference(
+                logits, init_boxes, refine_boxes,
+                fa_offsets, refine_points, point_centers, images.image_sizes)
             return results
 
-    def inference(self, logits, init_boxes, refine_boxes, fa_offsets, point_centers, image_sizes):
+    def inference(
+            self, logits, init_boxes, refine_boxes,
+            fa_offsets, refine_points, point_centers,
+            image_sizes):
         results = []
 
         for img_idx, image_size in enumerate(image_sizes):
@@ -679,30 +713,35 @@ class RepPointsVISDetector(nn.Module):
             init_boxes_per_image = [init_boxes_per_level[img_idx] for init_boxes_per_level in init_boxes]
             refine_boxes_per_image = [refine_boxes_per_level[img_idx] for refine_boxes_per_level in refine_boxes]
             fa_offsets_per_image = [offset_per_level[img_idx] for offset_per_level in fa_offsets]
+            refine_points_per_image = [refine_points_per_level[img_idx] for refine_points_per_level in refine_points]
 
             results_per_image = self.inference_single_image(
                 logits_per_image, init_boxes_per_image, refine_boxes_per_image,
-                fa_offsets_per_image, point_centers, tuple(image_size)
+                fa_offsets_per_image, refine_points_per_image, point_centers, tuple(image_size)
             )
             results.append(results_per_image)
         return results
 
-    def inference_single_image(self, logits, init_boxes, refine_boxes, fa_offsets, point_centers, image_size):
+    def inference_single_image(
+            self, logits, init_boxes, refine_boxes,
+            fa_offsets, refine_points, point_centers, image_size):
         boxes_all = []
         init_boxes_all = []
         class_idxs_all = []
         scores_all = []
         pred_offsets_all = []
         pred_points_all = []
+        pred_pointset_all = []
 
-        for logit, init_box, refine_box, fa_offset, point_center in \
-                zip(logits, init_boxes, refine_boxes, fa_offsets, point_centers):
+        for logit, init_box, refine_box, fa_offset, refine_point, point_center in \
+                zip(logits, init_boxes, refine_boxes, fa_offsets, refine_points, point_centers):
             scores, cls = logit.sigmoid().max(0)
             cls = cls.view(-1)
             scores = scores.view(-1)
             init_box = init_box.view(4, -1).permute(1, 0)
             refine_box = refine_box.view(4, -1).permute(1, 0)
             fa_offset = fa_offset.view(self.num_points * 2, -1).permute(1, 0)
+            refine_point = refine_point.view(self.num_points * 2, -1).permute(1, 0)
 
             predicted_prob, topk_idxs = scores.sort(descending=True)
             num_topk = min(self.topk_candidates, cls.size(0))
@@ -720,6 +759,7 @@ class RepPointsVISDetector(nn.Module):
             # add predicted offsets and point center for visualization
             fa_offset_topk = fa_offset[topk_idxs]
             point_center_topk = point_center[topk_idxs]
+            refine_point_topk = refine_point[topk_idxs]
 
             boxes_all.append(refine_box_topk)
             init_boxes_all.append(init_box_topk)
@@ -727,6 +767,7 @@ class RepPointsVISDetector(nn.Module):
             scores_all.append(score_topk)
             pred_offsets_all.append(fa_offset_topk)
             pred_points_all.append(point_center_topk)
+            pred_pointset_all.append(refine_point_topk)
             # The following code is the decoding procedure of RetinaNet in D2.
             # However, it fails to handle the predictions though I thought it could.
             """
@@ -758,9 +799,11 @@ class RepPointsVISDetector(nn.Module):
             scores_all.append(predicted_prob)
             """
 
-        boxes_all, scores_all, class_idxs_all, init_boxes_all, pred_offsets_all, pred_points_all = [
+        boxes_all, scores_all, class_idxs_all, init_boxes_all, \
+        pred_offsets_all, pred_pointset_all, pred_points_all = [
             cat(x) for x in
-            [boxes_all, scores_all, class_idxs_all, init_boxes_all, pred_offsets_all, pred_points_all]
+            [boxes_all, scores_all, class_idxs_all, init_boxes_all,
+             pred_offsets_all, pred_pointset_all, pred_points_all]
         ]
         keep = batched_nms(boxes_all, scores_all, class_idxs_all, self.nms_threshold)
         keep = keep[: self.max_detections_per_image]
@@ -772,6 +815,8 @@ class RepPointsVISDetector(nn.Module):
         result.init_boxes = init_boxes_all[keep]
         result.pred_offsets = pred_offsets_all[keep]
         result.pred_points = pred_points_all[keep]
+        result.pred_pointset = pred_pointset_all[keep]
+
         return result
 
     def preprocess_image(self, batched_inputs):

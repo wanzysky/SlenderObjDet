@@ -126,10 +126,10 @@ class OffsetsVisualizer(Visualizer):
         Returns:
             output (VisImage): image object with visualizations.
         """
-        print("draw offsets")
         boxes = predictions.pred_boxes if predictions.has("pred_boxes") else None
         scores = predictions.scores if predictions.has("scores") else None
         points = predictions.pred_points if predictions.has("pred_points") else None
+        pointsets = predictions.pred_pointset if predictions.has("pred_pointset") else None
         offsets = predictions.pred_offsets if predictions.has("pred_offsets") else None
         classes = predictions.pred_classes if predictions.has("pred_classes") else None
         labels = _create_text_labels(classes, scores, self.metadata.get("thing_classes", None))
@@ -161,8 +161,11 @@ class OffsetsVisualizer(Visualizer):
             offsets = offsets.numpy()
         if isinstance(points, torch.Tensor):
             points = points.numpy()
+        if isinstance(pointsets, torch.Tensor):
+            pointsets = pointsets.numpy()
 
         num_instances = len(points)
+        print(num_instances, len(pointsets))
         for i in range(num_instances):
             color = colors[i]
             point = points[i]
@@ -174,6 +177,10 @@ class OffsetsVisualizer(Visualizer):
             for coord in coordinates.tolist():
                 self.draw_circle(coord, color=color)
 
+            pointset = pointsets[i].reshape(-1, 2)
+            for coord in pointset.tolist():
+                self.draw_circle(coord, color=mplc.to_rgba("orange"))
+
         return self.output
 
 
@@ -181,7 +188,7 @@ def load_cfg(cfg_file):
     cfg = get_cfg()
     cfg.merge_from_file(cfg_file)
     cfg.SOLVER.IMS_PER_BATCH = 1
-    cfg.DATASETS.TEST = ("coco_2017_val",)
+    # cfg.DATASETS.TEST = ("coco_2017_val",)
     cfg.DATASETS.TEST = ("coco_objects365_val_with_masks",)
     cfg.MODEL.META_ARCH.NAME = 'PointSetVISHead'
     return cfg
