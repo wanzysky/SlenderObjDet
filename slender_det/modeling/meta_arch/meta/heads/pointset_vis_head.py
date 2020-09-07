@@ -146,9 +146,16 @@ class PointSetVISHead(HeadBase):
                 dcn_offsets_loc = self.offset_conv_loc(loc_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets_loc)
             elif self.feat_adaption == "Supervised Offset":
-                fa_offsets.append(loc_out_init)
                 # build offsets for deformable conv
                 loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
+                # (xy xy ... xy) to (yx yx ... yx)
+                loc_out_init_grad_mul = loc_out_init_grad_mul.reshape(
+                    loc_out_init_grad_mul.size(0),
+                    9, 2,
+                    *loc_out_init_grad_mul.shape[-2:]
+                ).flip(2)
+                loc_out_init_grad_mul = loc_out_init_grad_mul.reshape(-1, 18, *loc_out_init_grad_mul.shape[-2:])
+                fa_offsets.append(loc_out_init_grad_mul)
                 # TODOs: commpute offset for different methods
                 dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
                 # get adaptive feature map
