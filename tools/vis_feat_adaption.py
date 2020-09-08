@@ -15,7 +15,7 @@ from slender_det.config import get_cfg
 from slender_det.data.mappers import DatasetMapper
 from slender_det.data import build_detection_test_loader, MetadataCatalog
 from slender_det.modeling import build_model
-from concern.support import ratio_of_polygon
+from concern.support import ratio_of_polygon, ratio_of_bbox
 
 
 def detector_postprocess(results):
@@ -137,24 +137,24 @@ class OffsetsVisualizer(Visualizer):
         # if self._instance_mode == ColorMode.SEGMENTATION and self.metadata.get("thing_colors"):
         if self.metadata.get("thing_colors"):
             colors = [
-                self._jitter([x / 255 for x in self.metadata.thing_colors[c]]) for c in classes
+                self._change_color_brightness(
+                    # [x / 255 for x in self.metadata.thing_colors[c]],
+                    mplc.to_rgba("crimson"),
+                    brightness_factor=0
+                )
+                for c in classes
             ]
             alpha = 0.8
         else:
             colors = None
             alpha = 0.5
 
-        if self._instance_mode == ColorMode.IMAGE_BW:
-            self.output.img = self._create_grayscale_image(
-                (predictions.pred_masks.any(dim=0) > 0).numpy()
-            )
-            alpha = 0.3
-
+        self._default_font_size *= 3
         self.overlay_instances(
             boxes=boxes,
             labels=labels,
             assigned_colors=colors,
-            alpha=alpha,
+            alpha=alpha
         )
 
         if isinstance(offsets, torch.Tensor):
@@ -165,21 +165,21 @@ class OffsetsVisualizer(Visualizer):
             pointsets = pointsets.numpy()
 
         num_instances = len(points)
-        print(num_instances, len(pointsets))
         for i in range(num_instances):
             color = colors[i]
             point = points[i]
-            self.draw_circle(point, color=mplc.to_rgba("red"), radius=5)
+            self.draw_circle(point, color=mplc.to_rgba("limegreen"), radius=13)
 
             offset = offsets[i].reshape(-1, 2)
             point = np.repeat(point[None, :], axis=0, repeats=offset.shape[0])
             coordinates = point - offset[:, [1, 0]]
             for coord in coordinates.tolist():
-                self.draw_circle(coord, color=color)
+                self.draw_circle(coord, color=color, radius=11)
 
-            pointset = pointsets[i].reshape(-1, 2)
-            for coord in pointset.tolist():
-                self.draw_circle(coord, color=mplc.to_rgba("orange"))
+            if pointsets is not None:
+                pointset = pointsets[i].reshape(-1, 2)
+                for coord in pointset.tolist():
+                    self.draw_circle(coord, color=mplc.to_rgba("dodgerblue"))
 
         return self.output
 
@@ -188,8 +188,8 @@ def load_cfg(cfg_file):
     cfg = get_cfg()
     cfg.merge_from_file(cfg_file)
     cfg.SOLVER.IMS_PER_BATCH = 1
-    # cfg.DATASETS.TEST = ("coco_2017_val",)
-    cfg.DATASETS.TEST = ("coco_objects365_val_with_masks",)
+    cfg.DATASETS.TEST = ("coco_2017_val",)
+    # cfg.DATASETS.TEST = ("coco_objects365_val_with_masks",)
     cfg.MODEL.META_ARCH.NAME = 'PointSetVISHead'
     return cfg
 
@@ -230,15 +230,21 @@ def plot_offsets(batched_inputs, batched_results, cfg, save_dir=None):
         img = utils.convert_image_to_rgb(img.permute(1, 2, 0), cfg.INPUT.FORMAT)
         gt_instances = input['instances']
 
+        if not gt_instances.has("gt_masks") or len(gt_instances.gt_masks) <= 0:
+            continue
+
         # choose only slender object for visualization
         rars = [ratio_of_polygon(polygon) for polygon in gt_instances.gt_masks.polygons]
         rars = torch.tensor(rars)
-        gt_instances_vis = gt_instances[rars < 0.3]
+        ars = [ratio_of_bbox(bbox) for bbox in gt_instances.gt_boxes]
+        ars = torch.tensor(ars)
+
+        gt_instances_vis = gt_instances[(rars < 0.3) & (ars > 0.2)]
         if len(gt_instances_vis) <= 0:
             continue
 
         predictions = result['instances'].to(torch.device('cpu'))
-        predictions = predictions[predictions.scores > 0.5]
+        predictions = predictions[predictions.scores > 0.6]
 
         # choose only slender predictions
         if len(predictions) <= 0:
@@ -246,7 +252,7 @@ def plot_offsets(batched_inputs, batched_results, cfg, save_dir=None):
 
         iou = pairwise_iou(gt_instances_vis.gt_boxes, predictions.pred_boxes)
         value, idxs = torch.max(iou, dim=1)
-        valid_idxs = idxs[value > 0.5]
+        valid_idxs = idxs[value > 0.3]
         predictions_vis = predictions[valid_idxs]
         if len(predictions_vis) <= 0:
             continue
@@ -255,7 +261,61 @@ def plot_offsets(batched_inputs, batched_results, cfg, save_dir=None):
 
         v_pred = v_pred.draw_instance_predictions(predictions_vis)
         if save_dir is not None:
+            print(save_dir)
             v_pred.save(os.path.join(save_dir, file_name))
+
+
+def plot_offset2_v2(batched_inputs, batched_results, cfg, save_dir=None):
+    for input, result in zip(batched_inputs, batched_results):
+        file_name = input['file_name'].split('/')[-1]
+        img = input["image"]
+        img = utils.convert_image_to_rgb(img.permute(1, 2, 0), cfg.INPUT.FORMAT)
+        gt_instances = input['instances']
+
+        if not gt_instances.has("gt_masks") or len(gt_instances.gt_masks) <= 0:
+            print(file_name, "no gt masks")
+            continue
+
+        # choose only slender object for visualization
+        rars = [ratio_of_polygon(polygon) for polygon in gt_instances.gt_masks.polygons]
+        rars = torch.tensor(rars)
+        ars = [ratio_of_bbox(bbox) for bbox in gt_instances.gt_boxes]
+        ars = torch.tensor(ars)
+
+        print(rars, ars)
+
+        gt_instances_vis = gt_instances[(rars < 0.6) & (ars > 0.5)]
+        # gt_instances_vis = gt_instances
+        if len(gt_instances_vis) <= 0:
+            print(file_name, "no vis gt instances")
+            continue
+
+        predictions = result['instances'].to(torch.device('cpu'))
+        predictions = predictions[predictions.scores > 0.3]
+
+        # choose only slender predictions
+        if len(predictions) <= 0:
+            print(file_name, "no high score predictions")
+            continue
+
+        iou = pairwise_iou(gt_instances_vis.gt_boxes, predictions.pred_boxes)
+        value, idxs = torch.max(iou, dim=1)
+        valid_idxs = idxs[value > 0.2]
+        predictions_vis = predictions[valid_idxs]
+        predictions_vis.gt_boxes = gt_instances_vis.gt_boxes
+        predictions_vis.gt_classes = gt_instances_vis.gt_classes
+
+        if len(predictions_vis) <= 0:
+            print(file_name, "no match predictions")
+            continue
+
+        v_pred = OffsetsVisualizer(img, metadata=MetadataCatalog.get(cfg.DATASETS.TEST[0]))
+
+        v_pred = v_pred.draw_instance_predictions(predictions_vis)
+        if save_dir is not None:
+            print(file_name)
+            assert isinstance(file_name, str)
+            v_pred.save(os.path.join(save_dir, file_name.replace("jpg", "png")))
 
 
 def main(cfg_file, save_dir="/data/tmp/offsets_slender_unsup"):
@@ -267,8 +327,31 @@ def main(cfg_file, save_dir="/data/tmp/offsets_slender_unsup"):
     dataset_dicts = get_detection_dataset_dicts(
         [cfg.DATASETS.TEST[0]],
         filter_empty=False,
-    )[5000:]
-    dataset = DatasetFromList(dataset_dicts)
+    )
+
+    good_ids = [
+        "000000002587.jpg",
+        # "000000007816.jpg",
+        # "000000076261.jpg",
+        # "000000090284.jpg",
+        # "000000115118.jpg",
+        # "000000121417.jpg",
+        # "000000124277.jpg",
+        # "000000191580.jpg",
+        # "000000260105.jpg",
+        # "000000199055.jpg",
+        # "000000427256.jpg",
+        # "000000439854.jpg",
+        # "000000522889.jpg",
+    ]
+    dataset_dicts_selected = []
+    for dataset_dict in dataset_dicts:
+        if dataset_dict["file_name"].split('/')[-1] in good_ids:
+            dataset_dicts_selected.append(dataset_dict)
+
+    print(len(dataset_dicts_selected))
+
+    dataset = DatasetFromList(dataset_dicts_selected)
     mapper = Mapper(cfg, is_train=False)
 
     # data_loader = build_detection_test_loader(cfg, dataset_name=cfg.DATASETS.TEST[0], mapper=mapper)
@@ -308,9 +391,9 @@ def main(cfg_file, save_dir="/data/tmp/offsets_slender_unsup"):
             else:
                 raise ValueError("{}".format(cfg.MODEL.META_ARCHITECTURE))
 
-            plot_offsets(data, results, cfg, save_dir=save_dir)
-
-            if i >= 200:
+            # plot_offsets(data, results, cfg, save_dir=save_dir)
+            plot_offset2_v2(data, results, cfg, save_dir=save_dir)
+            if i >= 5000:
                 break
 
 

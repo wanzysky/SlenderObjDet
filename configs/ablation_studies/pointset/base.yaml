@@ -13,8 +13,8 @@ MODEL:
     RES_REFINE: True
 
 DATASETS:
-  TRAIN: ("coco_2017_train",)
-  TEST: ("coco_2017_val",)
+  TRAIN: ("coco_2017_train", )
+  TEST: ("coco_2017_val", )
 
 SOLVER:
   IMS_PER_BATCH: 16
