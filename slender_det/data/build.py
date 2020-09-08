@@ -1,4 +1,4 @@
-import logging 
+import logging
 import torch
 
 from detectron2.data import (
@@ -10,8 +10,8 @@ from detectron2.data.samplers import RepeatFactorTrainingSampler, TrainingSample
 
 from slender_det.evaluation.coco import COCO
 
-
 from . import mappers
+
 
 def repeat_factors_from_ratios(dataset_dicts):
     rep_factors = []
@@ -19,10 +19,10 @@ def repeat_factors_from_ratios(dataset_dicts):
         rep_factor = 0.1
         for ann in dataset_dict["annotations"]:
             ratio = COCO.compute_ratio(ann)["ratio"]
-            if ratio < 1/5:
+            if ratio < 1 / 5:
                 rep_factor = 1
                 break
-            if ratio < 1/3:
+            if ratio < 1 / 3:
                 rep_factor = 0.5
         rep_factors.append(rep_factor)
     return torch.tensor(rep_factors, dtype=torch.float32)
@@ -30,6 +30,8 @@ def repeat_factors_from_ratios(dataset_dicts):
 
 def get_dataset_mapper(dataset_name):
     if "coco" in dataset_name:
+        if "objects365" in dataset_name:
+            return getattr(mappers, "Obj365Mapper", None)
         return getattr(mappers, "DatasetMapper", None)
     elif "objects365" in dataset_name:
         return getattr(mappers, "OssMapper", None)

@@ -46,26 +46,19 @@ class PointSetVISHead(HeadBase):
         self._init_weights()
 
     def _prepare_offset(self):
+        self.dcn_kernel = int(np.sqrt(self.num_points))
+        self.dcn_pad = int((self.dcn_kernel - 1) / 2)
+        dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
+        dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
+        dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
+        dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
+        self.dcn_base_offset = torch.tensor(dcn_base_offset).view(1, -1, 1, 1)
+
         if self.feat_adaption == "Unsupervised Offset":
             self.offset_conv = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
-            self.dcn_kernel = int(np.sqrt(self.num_points))
-            self.dcn_pad = int((self.dcn_kernel - 1) / 2)
-            dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
-            dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
-            dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
-            dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
-            self.dcn_base_offset = torch.tensor(dcn_base_offset).view(1, -1, 1, 1)
         elif self.feat_adaption == "Split Unsup Offset":
             self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
             self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
-        elif self.feat_adaption == "Supervised Offset":
-            self.dcn_kernel = int(np.sqrt(self.num_points))
-            self.dcn_pad = int((self.dcn_kernel - 1) / 2)
-            dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
-            dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
-            dcn_base_x = np.tile(dcn_base, self.dcn_kernel)
-            dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
-            self.dcn_base_offset = torch.tensor(dcn_base_offset).view(1, -1, 1, 1)
 
     def _init_weights(self):
         # Initialization
@@ -111,10 +104,7 @@ class PointSetVISHead(HeadBase):
         loc_outs_refine = []
         fa_offsets = []
 
-        if self.feat_adaption == "Supervised Offset" or self.feat_adaption == "Unsupervised Offset":
-            dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
-        else:
-            dcn_base_offsets = None
+        dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
 
         for l, feature in enumerate(features):
             cls_feat = feature
@@ -131,6 +121,8 @@ class PointSetVISHead(HeadBase):
             if self.feat_adaption == "Empty":
                 cls_feat_fa = self.cls_conv(cls_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat)
+
+                fa_offsets.append(dcn_base_offsets + loc_out_init.new_zeros(loc_out_init.shape))
             elif self.feat_adaption == "Unsupervised Offset":
                 # TODO: choose a better input info for generating offsets
                 dcn_offsets = self.offset_conv(loc_feat)
