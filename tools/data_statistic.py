@@ -322,6 +322,7 @@ def PlotCOCOAndCOCOPlus(datasets,
         show_x.append(coor_x)
 
     plt.tick_params(labelsize=16)
+    bar_ec = [(0.73,0.73,0.73,1.0),(0.5,0.5,0.5,0.8)]
     for fig_i in range(num_subfigs): 
         axes[fig_i].set_yscale("symlog")
         prev = np.zeros((len(show_label[fig_i]), ))
@@ -331,14 +332,18 @@ def PlotCOCOAndCOCOPlus(datasets,
                         show_num_all_ratio[fig_i],
                         bottom=prev,
                         color=bar_colors,
-                        edgecolor=(0.5,0.5,0.5,0.8),
+                        edgecolor=bar_ec[fig_i],
                         width=1)
         for i,bar in enumerate(bars):
             if i%2!=0:
                 bar.set_hatch('\\')
         xticks = show_x[fig_i][::2]+np.ones(len(show_x[fig_i][::2]))*0.5
         axes[fig_i].set_xticks(xticks)
-        axes[fig_i].set_xticklabels(show_label[fig_i][::2], fontdict = {'fontsize':14}, rotation=300)
+        if fig_i==1:
+            axes[fig_i].xaxis.tick_top()
+            axes[fig_i].set_xticklabels(show_label[fig_i][::2], fontdict = {'fontsize':14}, rotation=45)
+        else:
+            axes[fig_i].set_xticklabels(show_label[fig_i][::2], fontdict = {'fontsize':14}, rotation=315)
         legend_labels = ['COCO', 'COCO+']
         hatches = ['x','\\']
         patches = []
