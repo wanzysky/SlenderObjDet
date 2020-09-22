@@ -181,6 +181,16 @@ _C.MODEL.META_ARCH.NMS_THRESH_TEST = 0.5
 _C.MODEL.META_ARCH.PRE_NMS_TOP_N = 1000
 _C.MODEL.META_ARCH.PRE_NMS_THRESH = 0.05
 
+# ---------------------------------------------------------------------------- #
+# Contrast Det Options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.CONTRAST = CN()
+_C.MODEL.CONTRAST.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.CONTRAST.STACK_CONVS = 3
+_C.MODEL.CONTRAST.FEAT_CHANNELS = 256
+_C.MODEL.CONTRAST.NORM_MODE = "GN"
+_C.MODEL.CONTRAST.EMBED_CHANNELS = 128
+
 
 def get_cfg() -> CN:
     """
