@@ -122,7 +122,18 @@ class AblationMetaArch(nn.Module):
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
-        return self.head(images, features, gt_instances=gt_instances)
+        results = self.head(images, features, gt_instances=gt_instances)
+        if self.training:
+            return results
+        
+        processed_results = []
+        for results_per_image, input_per_image, image_size in zip(
+                results, batched_inputs, images.image_sizes):
+            height = input_per_image.get("height", image_size[0])
+            width = input_per_image.get("width", image_size[1])
+            r = detector_postprocess(results_per_image, height, width)
+            processed_results.append({"instances": r})
+        return processed_results
 
     def inference(self, batched_inputs):
         assert not self.training

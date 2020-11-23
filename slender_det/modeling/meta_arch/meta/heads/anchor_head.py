@@ -13,7 +13,6 @@ from detectron2.modeling.matcher import Matcher
 from detectron2.layers import DeformConv, cat, batched_nms
 from detectron2.utils.events import get_event_storage
 from detectron2.layers import ShapeSpec, cat, batched_nms
-from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.structures import Boxes, Instances, ImageList, pairwise_iou
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
@@ -56,9 +55,9 @@ class AnchorHead(HeadBase):
         self.cls_out = nn.Conv2d(
                 self.feat_channels,
                 self.num_anchor * self.num_classes,
-                1, 1, 0)
+                3, 1, 1)
         self.loc_refine_out = nn.Conv2d(self.loc_feat_channels,
-                                        self.num_anchor * 4, 1, 1, 0)
+                                        self.num_anchor * 4, 3, 1, 1)
 
         self._init_weights()
 
@@ -87,6 +86,17 @@ class AnchorHead(HeadBase):
                 self.feat_channels,
                 self.feat_channels,
                 3, 1, 1)
+        elif self.feat_adaptive == "split":
+            self.offset_conv_cls = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+            self.offset_conv_loc = nn.Conv2d(self.feat_channels, 18, 1, 1, 0)
+            self.cls_conv = DeformConv(
+                self.feat_channels,
+                self.feat_channels,
+                3, 1, 1)
+            self.loc_refine_conv = DeformConv(
+                self.feat_channels,
+                self.feat_channels,
+                3, 1, 1)
         else:
             assert self.feat_adaptive == "supervised", self.feat_adaptive
 
@@ -100,6 +110,7 @@ class AnchorHead(HeadBase):
                                        axis=1).reshape((-1))
             self.dcn_base_offset = torch.tensor(dcn_base_offset).view(
                 1, -1, 1, 1)
+            self.offset_conv = nn.Conv2d(self.feat_channels, 14, 1, 1, 0)
             self.cls_conv = DeformConv(
                 self.feat_channels,
                 self.feat_channels,
@@ -128,30 +139,25 @@ class AnchorHead(HeadBase):
                 images: ImageList,
                 features: Dict[str, torch.Tensor],
                 gt_instances: Optional[List[Instances]] = None):
-        cls_outs, loc_outs_init, loc_outs_refine = self._forward(features)
+        point_centers, strides = self.get_center_grid(features)
+        cls_outs, loc_outs_init, loc_outs_refine = self._forward(features, point_centers)
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
         anchors = self.anchor_generator(features)
 
         if self.training:
-            point_centers, strides = self.get_center_grid(features)
             return self.losses(anchors, cls_outs, flat_and_concate_levels(loc_outs_init),
                                loc_outs_refine, gt_instances,
                                cat(point_centers, 0),
                                cat(strides, 0))
         else:
+            cls_outs = [permute_to_N_HWA_K(x, self.num_classes) for x in cls_outs]
+            loc_outs_refine = [permute_to_N_HWA_K(x, 4) for x in loc_outs_refine]
             results = self.inference(anchors, cls_outs, loc_outs_init,
                                      loc_outs_refine, images.image_sizes)
-            processed_results = []
-            for results_per_image, input_per_image, image_size in zip(
-                    results, gt_instances, images.image_sizes):
-                height = input_per_image.get("height", image_size[0])
-                width = input_per_image.get("width", image_size[1])
-                r = detector_postprocess(results_per_image, height, width)
-                processed_results.append({"instances": r})
-            return processed_results
+            return results
 
-    def _forward(self, features):
+    def _forward(self, features, point_centers):
         cls_outs = []
         loc_outs_init = []
         loc_outs_refine = []
@@ -159,18 +165,16 @@ class AnchorHead(HeadBase):
         if self.feat_adaptive == "supervised":
             dcn_base_offsets = self.dcn_base_offset.type_as(features[0])
 
+        factors = [1, 2, 4, 8, 16]
         for l, feature in enumerate(features):
             cls_feat = feature
             loc_feat = feature
 
-            for cls_conv in self.cls_subnet:
-                cls_feat = cls_conv(cls_feat)
-            for loc_conv in self.loc_subnet:
-                loc_feat = loc_conv(loc_feat)
+            cls_feat = self.cls_subnet(feature)
+            loc_feat = self.loc_subnet(feature)
 
             loc_out_init = self.loc_init_out(
                 F.relu_(self.loc_init_conv(loc_feat)))
-            loc_outs_init.append(loc_out_init)
 
             if self.feat_adaption == "none":
                 cls_feat_fa = self.cls_conv(cls_feat)
@@ -180,17 +184,40 @@ class AnchorHead(HeadBase):
                 dcn_offsets = self.offset_conv(loc_feat)
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
+            elif self.feat_adaption == "split":
+                # TODO: choose a better input info for generating offsets
+                cls_offsets = self.offset_conv_cls(loc_feat)
+                loc_offsets = self.offset_conv_loc(loc_feat)
+                cls_feat_fa = self.cls_conv(cls_feat, cls_offsets)
+                loc_feat_fa = self.loc_refine_conv(loc_feat, loc_offsets)
             elif self.feat_adaption == "supervised":
                 # build offsets for deformable conv
+                # N, 14, H, W
+                dcn_offsets = self.offset_conv(loc_feat)
                 loc_out_init_grad_mul = grad_mul(loc_out_init,
                                                  self.gradient_mul)
-                # TODOs: commpute offset for different methods
-                dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets
+                loc_out_init_grad_mul = loc_out_init_grad_mul.reshape(
+                    loc_out_init_grad_mul.shape[0],
+                    2, 2,
+                    *loc_out_init_grad_mul.shape[-2:]
+                ).flip(2).reshape(
+                    -1, 4, *loc_out_init_grad_mul.shape[-2:])
+                dcn_offsets = cat([loc_out_init_grad_mul, dcn_offsets], 1)
+
+                dcn_offsets = dcn_offsets - dcn_base_offsets
                 # get adaptive feature map
                 cls_feat_fa = self.cls_conv(cls_feat, dcn_offsets)
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets)
             else:
                 raise RuntimeError("Got {}".format(self.feat_adaption))
+
+            N, C, H, W = loc_out_init.shape
+            loc_out_init = loc_out_init * factors[l]
+            loc_out_init = loc_out_init.view(N, C // 2, 2, H, W) +\
+                point_centers[l].view(
+                    1, *loc_out_init.shape[2:], 2
+                ).permute(0, 3, 1, 2).unsqueeze(1) # 1, 1, 2, H, W
+            loc_outs_init.append(loc_out_init.view(N, C, H, W))
 
             cls_outs.append(self.cls_out(F.relu_(cls_feat_fa)))
             if self.res_refine:
@@ -323,7 +350,6 @@ class AnchorHead(HeadBase):
             reduction="sum",
         ) * self.loss_cls_weight
 
-
         init_foreground_idxs = gt_labels_init > 0
         strides = strides[None].repeat(pred_logits[0].shape[0], 1)
         coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 4
@@ -332,12 +358,12 @@ class AnchorHead(HeadBase):
             gt_boxes_init[init_foreground_idxs] / coords_norm_init,
             beta=0.11,
             reduction="sum",
-        )
+        ) / max(init_foreground_idxs.sum(), 1)
         if self.box_reg_loss_type == "smooth_l1":
             loss_loc_refine = smooth_l1_loss(
                 cat(pred_anchor_deltas, dim=1)[pos_mask],
                 gt_anchor_deltas[pos_mask],
-                beta=self.smooth_l1_loss_beta,
+                beta=0.11,
                 reduction="sum",
             )
         elif self.box_reg_loss_type == "giou":
@@ -356,7 +382,7 @@ class AnchorHead(HeadBase):
             "loss_cls":
             loss_cls / self.loss_normalizer,
             "loss_loc_init":
-            loss_loc_init / self.loss_normalizer * self.loss_loc_init_weight,
+            loss_loc_init * self.loss_loc_init_weight,
             "loss_loc_refine":
             loss_loc_refine / self.loss_normalizer *
             self.loss_loc_refine_weight,

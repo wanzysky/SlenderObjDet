@@ -4,9 +4,10 @@ MODEL:
     NAME: AnchorHead
     IOU_THRESHOLDS: [0.4, 0.5]
     IOU_LABELS: [0, -1, 1]
-    FEAT_ADAPTION: unsupervised
+    FEAT_ADAPTION: supervised
     LOSS_LOC_REFINE_WEIGHT: 1.0
   ANCHOR_GENERATOR:
     SIZES: !!python/object/apply:eval ["[[x, x * 2**(1.0/3), x * 2**(2.0/3) ] for x in [32, 64, 128, 256, 512 ]]"]
+
 
 
