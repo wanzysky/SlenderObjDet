@@ -20,6 +20,7 @@ def load_image_from_oss(path: s3path.S3Path, mode='rb', format=None):
 
     """
     # assert isinstance(path, s3path.S3Path)
+    print(path.as_uri())
     image = Image.open(io.BytesIO(path.open(mode=mode).read()))
     image = utils.convert_PIL_to_numpy(image, format)
 

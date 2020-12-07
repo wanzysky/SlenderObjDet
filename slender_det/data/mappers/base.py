@@ -24,14 +24,8 @@ class DatasetMapper(DefaultMapper):
         self.oss_root = cfg.DATALOADER.OSS_ROOT
 
     def read_image(self, file_name):
-        uods = _whether_use_oss_data_source(file_name)  # use_oss_data_source
-        if uods:
-            # set oss bucket name like: s3://detections/
-            file_path = smart_path(os.path.join(self.oss_root, file_name))
-            image = load_image_from_oss(file_path, format=self.image_format)
-        else:
-            image = utils.read_image(file_name, format=self.image_format)
-
+        file_path = smart_path(self.oss_root).joinpath(file_name)
+        image = load_image_from_oss(file_path, format=self.image_format)
         return image
 
     def __call__(self, dataset_dict):
@@ -53,8 +47,8 @@ class DatasetMapper(DefaultMapper):
         else:
             sem_seg_gt = None
 
-        aug_input = T.StandardAugInput(image, sem_seg=sem_seg_gt)
-        transforms = aug_input.apply_augmentations(self.augmentations)
+        aug_input = T.AugInput(image, sem_seg=sem_seg_gt)
+        transforms = self.augmentations(aug_input)
         image, sem_seg_gt = aug_input.image, aug_input.sem_seg
 
         image_shape = image.shape[:2]  # h, w

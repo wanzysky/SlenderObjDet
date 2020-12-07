@@ -1,1 +1,0 @@
-from .contrast import ContrastRPN

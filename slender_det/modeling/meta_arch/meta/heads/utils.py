@@ -1,9 +1,6 @@
-<<<<<<< HEAD
 from typing import List
 import copy
-=======
 from typing import List, Tuple, Optional, Dict
->>>>>>> Add RetinNet ablation experiments
 
 import torch
 import torch.nn as nn

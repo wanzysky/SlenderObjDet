@@ -50,7 +50,7 @@ class COCOEvaluator(Base):
                 2. "coco_instances_results.json" a json file in COCO's result
                    format.
         """
-        self._tasks = self._tasks_from_config(cfg)
+        self._tasks = None
         self._distributed = distributed
         self._output_dir = output_dir
 
