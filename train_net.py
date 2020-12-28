@@ -30,6 +30,8 @@ from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
     COCOPanopticEvaluator,
+    COCOEvaluator,
+    inference_on_dataset,
     DatasetEvaluators,
     LVISEvaluator,
     PascalVOCDetectionEvaluator,
@@ -41,7 +43,7 @@ from detectron2.modeling import GeneralizedRCNNWithTTA
 
 from slender_det.engine import BaseTrainer
 from slender_det.config import get_cfg
-from slender_det.evaluation import COCOEvaluator, inference_on_dataset
+# from slender_det.evaluation import COCOEvaluator, inference_on_dataset
 
 
 class Trainer(BaseTrainer):
@@ -72,7 +74,7 @@ class Trainer(BaseTrainer):
                 )
             )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
-            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder, use_fast_impl=False))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "cityscapes_instance":
@@ -137,7 +139,7 @@ class Trainer(BaseTrainer):
                     )
                     results[dataset_name] = {}
                     continue
-            results_i = inference_on_dataset(dataset_name, model, data_loader, evaluator)
+            results_i = inference_on_dataset( model, data_loader, evaluator)
             results[dataset_name] = results_i
             if comm.is_main_process():
                 assert isinstance(

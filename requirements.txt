@@ -1,3 +1,4 @@
+opencv-python
 fire
 numpy
 boto3
@@ -8,3 +9,4 @@ smart_path @ git+https://github.com/wanzysky/smart_path.git#egg=smart_path
 redis
 gevent
 flask
+ipdb

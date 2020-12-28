@@ -19,6 +19,7 @@ MODEL:
 DATASETS:
   TRAIN: ("coco_2017_train",)
   TEST: ("coco_2017_val","coco_objects365_val_with_masks")
+    # TEST: ("coco_objects365_val_with_masks",)
 
 SOLVER:
   IMS_PER_BATCH: 16

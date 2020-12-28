@@ -12,7 +12,7 @@ _C.DEBUG = False
 _C.USE_NORI = False
 _C.NEED_MASKS = False
 
-_C.DATALOADER.OSS_ROOT = "s3://detection/"
+_C.DATALOADER.ROOT = "."
 
 _C.NORI_PATH = "s3://detection/datasets/coco/"
 _C.REDIS = CN()
@@ -189,6 +189,9 @@ _C.MODEL.META_ARCH.IOU_LOSS_TYPE = "iou"
 
 _C.MODEL.META_ARCH.PRE_NMS_TOP_N = 1000
 _C.MODEL.META_ARCH.PRE_NMS_THRESH = 0.05
+
+
+_C.TEST.EVAL_PERIOD = 10240
 
 # ---------------------------------------------------------------------------- #
 # Contrast Det Options

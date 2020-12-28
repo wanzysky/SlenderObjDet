@@ -47,7 +47,11 @@ class OssMapper(DatasetMapper):
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         # USER: Write your own image loading if it's not from a file
         file_path = os.path.join(self.oss_root, dataset_dict['file_name'])
-        image = load_image_from_oss(smart_path(file_path), format=self.image_format)
+        try:
+            image = load_image_from_oss(smart_path(file_path), format=self.image_format)
+        except:
+            import ipdb
+            ipdb.set_trace()
         utils.check_image_size(dataset_dict, image)
 
         # USER: Remove if you don't do semantic/panoptic segmentation.

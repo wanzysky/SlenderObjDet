@@ -31,7 +31,7 @@ def repeat_factors_from_ratios(dataset_dicts):
 def get_dataset_mapper(dataset_name):
     if "coco" in dataset_name:
         if "objects365" in dataset_name:
-            return getattr(mappers, "Obj365Mapper", None)
+            return getattr(mappers, "DatasetMapper", None)
         return getattr(mappers, "DatasetMapper", None)
     elif "objects365" in dataset_name:
         return getattr(mappers, "OssMapper", None)

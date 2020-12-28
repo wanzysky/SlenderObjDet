@@ -21,10 +21,17 @@ def _whether_use_oss_data_source(file_name):
 class DatasetMapper(DefaultMapper):
     def __init__(self, cfg, is_train: bool = True):
         super().__init__(cfg, is_train)
-        self.oss_root = cfg.DATALOADER.OSS_ROOT
+        self.root = cfg.DATALOADER.ROOT
+        self.root_path = None
 
     def read_image(self, file_name):
-        file_path = smart_path(self.oss_root).joinpath(file_name)
+        if self.root_path is None:
+            self.root_path = smart_path(self.root)
+        try:
+            file_path = self.root_path.joinpath(file_name)
+        except Exception as e:
+            print(e)
+            print(self.root, file_name)
         image = load_image_from_oss(file_path, format=self.image_format)
         return image
 
@@ -101,13 +108,3 @@ class DatasetMapper(DefaultMapper):
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             dataset_dict["instances"] = utils.filter_empty_instances(instances)
         return dataset_dict
-
-
-class Obj365Mapper(DatasetMapper):
-    """
-    New augmentations for objects365 dataset
-    TODOS: better resize aug, currently method causes worse results on COCO.
-    """
-    def __init__(self, cfg, is_train: bool = True):
-        super().__init__(cfg, is_train)
-        self.augmentations = build_augmentation(cfg, is_train=is_train)
