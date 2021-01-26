@@ -75,6 +75,7 @@ class BaseTrainer(DefaultTrainer):
         Overwrite it for using our own model.
         """
         model = build_model(cfg)
+        print(model)
         logger = logging.getLogger(__name__)
         logger.info("Model:\n{}".format(model))
         return model

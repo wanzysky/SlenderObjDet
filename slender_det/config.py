@@ -191,7 +191,7 @@ _C.MODEL.META_ARCH.PRE_NMS_TOP_N = 1000
 _C.MODEL.META_ARCH.PRE_NMS_THRESH = 0.05
 
 
-_C.TEST.EVAL_PERIOD = 10240
+_C.TEST.EVAL_PERIOD = 102400
 
 # ---------------------------------------------------------------------------- #
 # Contrast Det Options
