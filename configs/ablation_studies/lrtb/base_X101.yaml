@@ -1,0 +1,38 @@
+MODEL:
+  META_ARCHITECTURE: "AblationMetaArch"
+  WEIGHTS: "detectron2://ImageNetPretrained/FAIR/X-101-32x8d.pkl"
+  PIXEL_STD: [57.375, 57.120, 58.395]
+  MASK_ON: False
+  BACKBONE:
+    NAME: "build_retinanet_resnet_fpn_backbone"
+  RESNETS:
+    STRIDE_IN_1X1: False  # this is a C2 model
+    NUM_GROUPS: 32
+    WIDTH_PER_GROUP: 8
+    DEPTH: 101
+    OUT_FEATURES: ["res3", "res4", "res5"]
+  FPN:
+    IN_FEATURES: ["res3", "res4", "res5"]
+  META_ARCH:
+    NAME: "LRTBHead"
+    NUM_POINTS: 2
+    NORM_REG_TARGETS: True
+    CENTERNESS_ON_LOC: True
+    IOU_LOSS_TYPE: "giou"
+    RES_REFINE: False
+
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+#  TEST: ("coco_2017_val",)
+  TEST: ("coco_objects365_val_with_masks",)
+
+SOLVER:
+  IMS_PER_BATCH: 16
+  BASE_LR: 0.01
+  STEPS: (60000, 80000)
+  MAX_ITER: 90000
+
+INPUT:
+  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+
+VERSION: 2
