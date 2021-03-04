@@ -1,8 +1,8 @@
 import os
 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-from detectron2.data.datasets import load_coco_json
-from detectron2.data.datasets.builtin_meta import _get_coco_instances_meta
+from detectron2.data.datasets import load_coco_json, register_coco_instances
+from detectron2.data.datasets.builtin_meta import _get_coco_instances_meta, _get_builtin_metadata
 
 from .obj365 import load_obj365_json
 from .builtin_meta import _get_obj365_metadata
@@ -33,6 +33,21 @@ def register_obj365_coco_type(name, metadata, json_file, image_root):
     MetadataCatalog.get(name).set(
         json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata
     )
+
+def register_rotated_coco(root):
+    SPLITS = {
+        "rcoco_2017_train": ("coco/train2017", "coco/annotations/rbox_train2017.json"),
+        "rcoco_2017_val": ("coco/val2017", "coco/annotations/rbox_val2017.json"),
+    }
+    for key, (image_root, json_file) in SPLITS.items():
+        # Assume pre-defined datasets live in `./datasets`.
+        register_coco_instances(
+            key,
+            _get_builtin_metadata("coco"),
+            os.path.join(root, json_file) if "://" not in json_file else json_file,
+            os.path.join(root, image_root),
+        )
+
 
 
 def register_all_obj365(root):
@@ -75,3 +90,4 @@ def register_all_obj365(root):
 # Register them all under "./datasets"
 _root = os.getenv("DETECTRON2_DATASETS", "datasets")
 register_all_obj365(_root)
+register_rotated_coco(_root)

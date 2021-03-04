@@ -20,23 +20,30 @@ from concern import webcv2
 def main(input_path, output_path, show=False):
     coco = COCO(input_path)
 
-    anns = []
-    data_dir = "datasets/coco/train2017/"
-    for ann_id, ann in coco.anns.items():
-        ann = coco.compute_rbox(ann)
-        ann["bbox"] = ann["rbox"]
-        anns.append(ann)
-        if show:
-            image_path = os.path.join(dic["file_name"])
+    if show:
+        data_dir = "datasets/coco/val2017/"
+        dicts = DatasetCatalog.get("coco_2017_val")
+        metadata = MetadataCatalog.get("coco_2017_val")
+        for dic in dicts:
+            for ann in dic["annotations"]:
+                coco.compute_rbox(ann)
+                ann["bbox"] = ann["rbox"]
+                ann["bbox_mode"] = ann["rbox_mode"]
+                print(ann["bbox"])
+
+            image_path = dic["file_name"]
             img = utils.convert_PIL_to_numpy(
-                    Image.open(image_path),
-                    "RGB")
-            visualizer = Visualizer(img, metadata=metadata, scale=1)
+                    Image.open(image_path), "RGB")
             visualizer = Visualizer(img, metadata=metadata, scale=1)
             vis = visualizer.draw_dataset_dict(dic)
             webcv2.imshow(image_path+"bbox", vis.get_image()[:, :, ::-1])
             webcv2.waitKey()
 
+    anns = []
+    for ann_id, ann in tqdm.tqdm(coco.anns.items()):
+        ann = coco.compute_rbox(ann)
+        ann["bbox"] = ann["rbox"]
+        anns.append(ann)
 
     info = dict(date_created=str(datetime.datetime.now()),
                 description="Rbox version of {}.".format(
