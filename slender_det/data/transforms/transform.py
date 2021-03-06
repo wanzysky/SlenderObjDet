@@ -92,3 +92,15 @@ class ResizePaddingTransform(Transform):
 
     def inverse(self):
         return ResizeTransform(self.new_h, self.new_w, self.h, self.w, self.interp)
+
+    def apply_rbox(self, rbox):
+        x, y, w, h, a = rbox
+        x = x * (self.new_w * 1.0 / self.w)
+        w = w * (self.new_w * 1.0 / self.w)
+        y = x * (self.new_h * 1.0 / self.h)
+        h = w * (self.new_h * 1.0 / self.h)
+        new_rbox = [x, y, w, h, a]
+        # keep the type of input
+        for i in range(5):
+            rbox[i] = new_rbox[i]
+        return rbox

@@ -27,6 +27,7 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine import default_argument_parser, default_setup, hooks, launch
 from detectron2.evaluation import (
     DatasetEvaluator,
+    RotatedCOCOEvaluator,
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
     COCOPanopticEvaluator,
@@ -73,6 +74,8 @@ class Trainer(BaseTrainer):
             )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
             evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+        if evaluator_type in ["rcoco"]:
+            evaluator_list.append(RotatedCOCOEvaluator(dataset_name, cfg, True, output_folder))
         if evaluator_type == "coco_panoptic_seg":
             evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
         if evaluator_type == "cityscapes_instance":

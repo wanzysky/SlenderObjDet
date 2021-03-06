@@ -1,19 +1,8 @@
-_BASE_: "../faster/Base-RCNN-FPN.yaml"
+_BASE_: "Base-RRCNN-FPN.yaml"
 MODEL:
   WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
   MASK_ON: False
   RESNETS:
     DEPTH: 50
-  ROI_HEADS:
-    NAME: "ProposalVisibleHead"
-    IN_FEATURES: ["p2", "p3", "p4", "p5"]
-  ROI_BOX_HEAD:
-    NAME: "FastRCNNConvFCHead"
-    NUM_FC: 2
-    POOLER_RESOLUTION: 7
-  ROI_MASK_HEAD:
-    NAME: "MaskRCNNConvUpsampleHead"
-    NUM_CONV: 4
-    POOLER_RESOLUTION: 14
 
-OUTPUT_DIR: ./train_log/0617_base_faster_rcnn_R_50_FPN_1x
+OUTPUT_DIR: train_log/rotated/R50/faster
