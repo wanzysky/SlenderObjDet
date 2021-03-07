@@ -36,7 +36,7 @@ MODEL:
     BBOX_REG_WEIGHTS: (10.0, 5.0, 5.0, 5.0, 1.0)
 DATASETS:
   TRAIN: ("rcoco_2017_train",)
-  TEST: ("rcoco_2017_val",)
+  TEST: ("rcoco_2017_train",)
 SOLVER:
   IMS_PER_BATCH: 16
   BASE_LR: 0.02

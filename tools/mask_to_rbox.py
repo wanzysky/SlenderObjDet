@@ -39,9 +39,9 @@ def main(input_path, output_path, show=False):
             webcv2.imshow(image_path+"bbox", vis.get_image()[:, :, ::-1])
             webcv2.waitKey()
 
+    skip = False
     if "val" in input_path:
         skip = True
-    skip = False
     anns = []
     for ann_id, ann in tqdm.tqdm(coco.anns.items()):
         if skip and ann["iscrowd"]:
