@@ -97,3 +97,7 @@ def fig2image(fig: plt.Figure):
     buff, (width, height) = fig.canvas.print_to_buffer()
     image = np.fromstring(buff, dtype=np.uint8).reshape(height, width, 4)
     return image
+
+def bounding_of_rbox(box):
+    box = cv2.boundingRect(cv2.boxPoints(((box[0], box[1]), (box[2], box[3]), -box[4])))
+    return np.array(box).tolist()

@@ -8,7 +8,7 @@ from detectron2.structures import RotatedBoxes
 from detectron2.structures import BoxMode
 
 from slender_det.structures.masks import PolygonMasks
-from concern.support import rbox_from_polygon
+from concern.support import rbox_from_polygon, bounding_of_rbox
 
 
 class COCO(Base):
@@ -103,4 +103,17 @@ class COCO(Base):
             import ipdb
             ipdb.set_trace()
         ann["rbox_mode"] = BoxMode.XYWHA_ABS
+        return ann
+
+    @classmethod
+    def rbox_to_boungind(cls, ann: dict):
+        if ann["iscrowd"]:
+            ann["bbox"] = ann["bbox"][:4]
+            ann["bbox_mode"] = BoxMode.XYWH_ABS
+            return ann
+
+        ann["bbox_mode"] = BoxMode.XYWH_ABS
+        if len(ann["bbox"]) == 5:
+            ann["bbox"] = bounding_of_rbox(ann["bbox"])
+
         return ann
