@@ -39,11 +39,12 @@ def main(input_path, output_path, show=False):
             webcv2.imshow(image_path+"bbox", vis.get_image()[:, :, ::-1])
             webcv2.waitKey()
 
+    if "val" in input_path:
+        skip = True
+    skip = False
     anns = []
     for ann_id, ann in tqdm.tqdm(coco.anns.items()):
-        if ann["iscrowd"]:
-            import ipdb
-            ipdb.set_trace()
+        if skip and ann["iscrowd"]:
             continue
         ann = coco.compute_rbox(ann)
         ann["bbox"] = ann["rbox"]
