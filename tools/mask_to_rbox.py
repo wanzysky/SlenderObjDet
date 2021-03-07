@@ -41,6 +41,10 @@ def main(input_path, output_path, show=False):
 
     anns = []
     for ann_id, ann in tqdm.tqdm(coco.anns.items()):
+        if ann["iscrowd"]:
+            import ipdb
+            ipdb.set_trace()
+            continue
         ann = coco.compute_rbox(ann)
         ann["bbox"] = ann["rbox"]
         anns.append(ann)
