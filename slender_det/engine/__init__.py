@@ -1,1 +1,1 @@
-from .defaults import BaseTrainer
+from .defaults import BaseTrainer, default_setup

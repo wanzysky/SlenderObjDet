@@ -1,32 +1,25 @@
 import copy
 import os
-
-from detectron2.data import DatasetMapper as DefaultMapper
-import detectron2.data.detection_utils as utils
-import detectron2.data.transforms as T
-from detectron2.structures import (
-    BitMasks,
-    BoxMode,
-    Boxes,
-    RotatedBoxes,
-    Instances,
-    Keypoints,
-    PolygonMasks,
-    polygons_to_bitmask,
-)
+from concern.smart_path import smart_path
 import numpy as np
 import pycocotools.mask as mask_util
 import torch
 
-from concern.smart_path import smart_path
+import detectron2.data.detection_utils as utils
+import detectron2.data.transforms as T
+from detectron2.data import DatasetMapper as DefaultMapper
+from detectron2.structures import (
+    BitMasks,
+    Boxes,
+    BoxMode,
+    Instances,
+    Keypoints,
+    PolygonMasks,
+    RotatedBoxes,
+    polygons_to_bitmask,
+)
 from slender_det.data.utils import build_augmentation, load_image_from_oss
 
-
-#def _whether_use_oss_data_source(file_name):
-#    if "objects365" in file_name:
-#        return True
-#    else:
-#        return False
 
 def annotations_to_instances(annos, image_size, mask_format="polygon"):
     """
@@ -95,6 +88,7 @@ def annotations_to_instances(annos, image_size, mask_format="polygon"):
 
     return target
 
+
 def transform_instance_annotations(
     annotation, transforms, image_size, *, keypoint_hflip_indices=None
 ):
@@ -129,10 +123,10 @@ def transform_instance_annotations(
     # clip transformed bbox to image size
     if box_mode == BoxMode.XYWHA_ABS:
         bbox = transforms.apply_rotated_box(np.array([bbox]))[0]
-        bbox[:4] = bbox[:4].clip(min=0)
     else:
         bbox = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
     annotation["bbox"][:4] = np.minimum(bbox[:4], list(image_size + image_size)[::-1])
+    annotation["bbox"][4] = bbox[4].copy()
     annotation["bbox_mode"] = box_mode
 
     if "segmentation" in annotation:
@@ -191,6 +185,7 @@ class DatasetMapper(DefaultMapper):
         """
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         # USER: Write your own image loading if it's not from a file
+        
         image = self.read_image(dataset_dict["file_name"])
         utils.check_image_size(dataset_dict, image)
 

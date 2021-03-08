@@ -2,16 +2,16 @@ import logging
 import torch
 
 from detectron2.data import (
+    build_batch_data_loader,
     build_detection_test_loader,
     get_detection_dataset_dicts,
-    build_batch_data_loader)
+)
 from detectron2.data.common import DatasetFromList, MapDataset
 from detectron2.data.samplers import RepeatFactorTrainingSampler, TrainingSampler
-
 from slender_det.evaluation.coco import COCO
 
-
 from . import mappers
+
 
 def repeat_factors_from_ratios(dataset_dicts):
     rep_factors = []

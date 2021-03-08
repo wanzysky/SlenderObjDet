@@ -4,9 +4,11 @@ MODEL:
   BACKBONE:
     NAME: "build_resnet_fpn_backbone"
   RESNETS:
+    DEPTH: 50
     OUT_FEATURES: ["res2", "res3", "res4", "res5"]
   FPN:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
+  WEIGHTS: "/data/detection/log_dir/model_final.pth"
   PROPOSAL_GENERATOR:
     NAME: RRPN
   ANCHOR_GENERATOR:
@@ -35,17 +37,9 @@ MODEL:
     POOLER_TYPE: ROIAlignRotated
     BBOX_REG_WEIGHTS: (10.0, 5.0, 5.0, 5.0, 1.0)
 DATASETS:
-  TRAIN: ("rcoco_2017_train",)
-  TEST: ("rcoco_2017_val", "coco_2017_val")
-SOLVER:
-  IMS_PER_BATCH: 16
-  BASE_LR: 0.02
-  STEPS: (60000, 80000)
-  MAX_ITER: 90000
-TEST:
-  EVAL_PERIOD: 10000
-VIS_PERIOD: 500
+  # TEST: ("coco_2017_test-dev",)
+  # TEST: ("rcoco_2017_val",)
+  TEST: ("coco_2017_val",)
 
-INPUT:
-  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
 VERSION: 2
+

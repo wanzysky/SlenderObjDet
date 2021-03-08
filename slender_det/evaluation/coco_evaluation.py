@@ -1,30 +1,29 @@
-import os
-import copy
-import itertools
-from collections import OrderedDict
-import json
-import numpy as np
 import contextlib
+import copy
 import io
+import itertools
+import json
 import logging
+import os
 import pickle
-import pycocotools.mask as mask_util
-from tabulate import tabulate
-
+from collections import OrderedDict
+from concern.support import between_ranges, bounding_of_rbox
+import numpy as np
 import cv2
+import pycocotools.mask as mask_util
 import torch
 from fvcore.common.file_io import PathManager
+from tabulate import tabulate
 
 import detectron2.utils.comm as comm
 from detectron2.data import MetadataCatalog
 from detectron2.data.datasets.coco import convert_to_coco_json
-from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.evaluation import COCOEvaluator as Base
+from detectron2.structures import Boxes, BoxMode, pairwise_iou
 from detectron2.utils.logger import create_small_table
 
-from .cocoeval import COCOeval
 from .coco import COCO
-from concern.support import between_ranges, bounding_of_rbox
+from .cocoeval import COCOeval
 
 
 class COCOEvaluator(Base):
@@ -262,6 +261,10 @@ class COCOEvaluator(Base):
         return results
 
     def _evaluate_predictions_ar(self, predictions):
+        if not self._do_evaluation:
+            self._logger.info("Annotations are not available for evaluation.")
+            return
+
         res = {}
         aspect_ratios = {
             "all ratios": [0 / 1, 1e5 / 1],

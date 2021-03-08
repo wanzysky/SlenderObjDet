@@ -4,5 +4,3 @@ MODEL:
   MASK_ON: False
   RESNETS:
     DEPTH: 50
-
-OUTPUT_DIR: train_log/rotated/R50/faster

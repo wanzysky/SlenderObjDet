@@ -1,20 +1,18 @@
-import json
 import datetime
+import json
 import os
+from concern import webcv2
+from fire import Fire
 from itertools import chain
-
-from PIL import Image
+import numpy as np
 import cv2
 import tqdm
-import numpy as np
-from fire import Fire
-from detectron2.data import detection_utils as utils
-from detectron2.data import MetadataCatalog, DatasetCatalog
-from detectron2.utils.visualizer import Visualizer
-from detectron2.structures import BoxMode
+from PIL import Image
 
+from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.data import detection_utils as utils
+from detectron2.utils.visualizer import Visualizer
 from slender_det.evaluation.coco import COCO
-from concern import webcv2
 
 
 def main(input_path, output_path, show=False):
@@ -42,6 +40,7 @@ def main(input_path, output_path, show=False):
     skip = False
     if "val" in input_path:
         skip = True
+
     anns = []
     for ann_id, ann in tqdm.tqdm(coco.anns.items()):
         if skip and ann["iscrowd"]:
