@@ -245,7 +245,7 @@ def register_rotated_coco(root):
         # 2. Optionally, add metadata about this dataset,
         # since they might be useful in evaluation, visualization or logging
         MetadataCatalog.get(name).set(
-            json_file=json_file, image_root=image_root, evaluator_type="coco", **metadata
+            json_file=json_file, image_root=image_root, evaluator_type="rcoco", **metadata
         )
 
     SPLITS = {
@@ -270,7 +270,7 @@ def register_all_obj365(root):
             "obj365/annotations/objects365_val_20190423.json"
         ),
         "coco_objects365_val_with_masks": (
-            "objects365_raw_data/objects365/val-with-coco",
+            "obj365/coco+",
             "obj365/annotations/coco_obj365_slender_val_20200820.json"
         ),
         "coco_objects365_val_with_masks_full": (
@@ -281,6 +281,7 @@ def register_all_obj365(root):
     for key, (image_root, json_file) in SPILTS.items():
         # Assume pre-defined datasets live in `./datasets`.
         if 'coco' in key:
+            image_root = os.path.join(root, image_root)
             register_obj365_coco_type(
                 key,
                 _get_coco_instances_meta(),

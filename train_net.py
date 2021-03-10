@@ -26,6 +26,7 @@ from detectron2.data import MetadataCatalog
 from detectron2.engine import default_argument_parser, hooks, launch
 from detectron2.evaluation import (
     DatasetEvaluator,
+    COCOEvaluator as D2COCOEvaluator,
     DatasetEvaluators,
     RotatedCOCOEvaluator,
     print_csv_format,

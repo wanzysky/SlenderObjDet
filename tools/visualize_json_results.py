@@ -3,10 +3,9 @@
 
 import argparse
 import json
+import numpy as np
 import os
 from collections import defaultdict
-from concern import webcv2
-import numpy as np
 import cv2
 import tqdm
 from fvcore.common.file_io import PathManager
@@ -16,28 +15,23 @@ from detectron2.structures import Boxes, BoxMode, Instances, RotatedBoxes
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
 
+import slender_det.data
+from concern import webcv2
 
-def create_instances(predictions, image_size, r=False):
+
+def create_instances(predictions, image_size):
     ret = Instances(image_size)
 
     score = np.asarray([x["score"] for x in predictions])
     chosen = (score > args.conf_threshold).nonzero()[0]
     score = score[chosen]
-    if r:
-        bbox = np.asarray([predictions[i]["bbox"] for i in chosen]).reshape(-1, 5)
-        bbox = BoxMode.convert(bbox, BoxMode.XYWHA_ABS, BoxMode.XYWHA_ABS)
-    else:
-        bbox = np.asarray([predictions[i]["bbox"] for i in chosen]).reshape(-1, 4)
-        bbox = BoxMode.convert(bbox, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+    bbox = np.asarray([predictions[i]["bbox"] for i in chosen]).reshape(-1, 5)
+    bbox = BoxMode.convert(bbox, BoxMode.XYWHA_ABS, BoxMode.XYWHA_ABS)
 
     labels = np.asarray([dataset_id_map(predictions[i]["category_id"]) for i in chosen])
 
     ret.scores = score
-    if r:
-        ret.pred_boxes = RotatedBoxes(bbox)
-    else:
-        ret.pred_boxes = Boxes(bbox)
-        
+    ret.pred_boxes = RotatedBoxes(bbox)
     ret.pred_classes = labels
 
     try:

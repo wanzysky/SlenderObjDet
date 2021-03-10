@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
     dirname = args.output_dir
     os.makedirs(dirname, exist_ok=True)
-    metadata = MetadataCatalog.get(cfg.DATASETS.TEST[0])
+    metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
 
     def output(vis, fname):
         if args.show:

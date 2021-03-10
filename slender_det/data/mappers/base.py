@@ -126,7 +126,8 @@ def transform_instance_annotations(
     else:
         bbox = transforms.apply_box(np.array([bbox]))[0].clip(min=0)
     annotation["bbox"][:4] = np.minimum(bbox[:4], list(image_size + image_size)[::-1])
-    annotation["bbox"][4] = bbox[4].copy()
+    if len(annotation["bbox"]) == 5:
+        annotation["bbox"][4] = bbox[4].copy()
     annotation["bbox_mode"] = box_mode
 
     if "segmentation" in annotation:
@@ -158,10 +159,10 @@ class DatasetMapper(DefaultMapper):
     def __init__(self, cfg, is_train: bool = True):
         super().__init__(cfg, is_train)
         self.uods = False # use_oss_data_source
-        if 'objects365' in cfg.DATASETS.TEST[0]:
-            self.uods = True
-        if self.uods:
-            self.augmentations = build_augmentation(cfg, is_train)
+        # if 'objects365' in cfg.DATASETS.TEST[0]:
+        #     self.uods = True
+        # if self.uods:
+        #     self.augmentations = build_augmentation(cfg, is_train)
         self.oss_root = cfg.DATALOADER.OSS_ROOT
 
     def read_image(self, file_name):

@@ -19,9 +19,9 @@ def main(input_path, output_path, show=False):
     coco = COCO(input_path)
 
     if show:
-        data_dir = "datasets/coco/val2017/"
-        dicts = DatasetCatalog.get("coco_2017_val")
-        metadata = MetadataCatalog.get("coco_2017_val")
+        data_dir = "datasets/coco/train2017/"
+        dicts = DatasetCatalog.get("coco_2017_train")
+        metadata = MetadataCatalog.get("coco_2017_train")
         for dic in dicts:
             for ann in dic["annotations"]:
                 coco.compute_rbox(ann)
