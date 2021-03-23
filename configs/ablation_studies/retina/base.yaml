@@ -9,7 +9,7 @@ MODEL:
   FPN:
     IN_FEATURES: ["res3", "res4", "res5"]
   META_ARCH:
-    NAME: "LRTBHead"
+    NAME: AnchorHead
     NUM_POINTS: 2
     NORM_REG_TARGETS: True
     CENTERNESS_ON_LOC: True
@@ -19,6 +19,8 @@ MODEL:
 DATASETS:
   TRAIN: ("coco_2017_train",)
   TEST: ("coco_objects365_val_with_masks", "coco_2017_val")
+    # TEST: ("coco_2017_val","coco_objects365_val_with_masks")
+    # TEST: ("coco_objects365_val_with_masks",)
 
 SOLVER:
   IMS_PER_BATCH: 16

@@ -1,29 +1,29 @@
-import contextlib
-import copy
-import io
-import itertools
-import json
-import logging
 import os
-import pickle
+import copy
+import itertools
 from collections import OrderedDict
-from concern.support import between_ranges, bounding_of_rbox
+import json
 import numpy as np
-import cv2
+import contextlib
+import io
+import logging
+import pickle
 import pycocotools.mask as mask_util
+from tabulate import tabulate
+
 import torch
 from fvcore.common.file_io import PathManager
-from tabulate import tabulate
 
 import detectron2.utils.comm as comm
 from detectron2.data import MetadataCatalog
 from detectron2.data.datasets.coco import convert_to_coco_json
-from detectron2.evaluation import COCOEvaluator as Base
 from detectron2.structures import Boxes, BoxMode, pairwise_iou
+from detectron2.evaluation import COCOEvaluator as Base
 from detectron2.utils.logger import create_small_table
 
-from .coco import COCO
 from .cocoeval import COCOeval
+from .coco import COCO
+from concern.support import between_ranges
 
 
 class COCOEvaluator(Base):
@@ -71,33 +71,11 @@ class COCOEvaluator(Base):
         json_file = PathManager.get_local_path(self._metadata.json_file)
         # with contextlib.redirect_stdout(io.StringIO()):
         self._coco_api = COCO(json_file)
-        for ann_id, ann in self._coco_api.anns.items():
-            self._coco_api.anns[ann_id] = self._coco_api.rbox_to_boungind(ann)
 
         self._kpt_oks_sigmas = cfg.TEST.KEYPOINT_OKS_SIGMAS
         # Test set json files do not contain annotations (evaluation must be
         # performed using the COCO evaluation server).
         self._do_evaluation = "annotations" in self._coco_api.dataset
-
-    def process(self, inputs, outputs):
-        """
-        Args:
-            inputs: the inputs to a COCO model (e.g., GeneralizedRCNN).
-                It is a list of dict. Each dict corresponds to an image and
-                contains keys like "height", "width", "file_name", "image_id".
-            outputs: the outputs of a COCO model. It is a list of dicts with key
-                "instances" that contains :class:`Instances`.
-        """
-        for input, output in zip(inputs, outputs):
-            prediction = {"image_id": input["image_id"]}
-
-            # TODO this is ugly
-            if "instances" in output:
-                instances = output["instances"].to(self._cpu_device)
-                prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
-            if "proposals" in output:
-                prediction["proposals"] = output["proposals"].to(self._cpu_device)
-            self._predictions.append(prediction)
 
     def evaluate(self, name="coco"):
         if self._distributed:
@@ -135,10 +113,7 @@ class COCOEvaluator(Base):
             with PathManager.open(file_path, "wb") as f:
                 torch.save(self._results, f)
 
-        results = OrderedDict()
-        for key, v in self._results.items():
-            results["slender/" + key] = copy.deepcopy(v)
-        return results
+        return copy.deepcopy(self._results)
 
     def _eval_predictions(self, tasks, predictions):
         """
@@ -261,10 +236,6 @@ class COCOEvaluator(Base):
         return results
 
     def _evaluate_predictions_ar(self, predictions):
-        if not self._do_evaluation:
-            self._logger.info("Annotations are not available for evaluation.")
-            return
-
         res = {}
         aspect_ratios = {
             "all ratios": [0 / 1, 1e5 / 1],
@@ -334,11 +305,8 @@ def _evaluate_predictions_ar(
 
         image_id = prediction_dict["image_id"]
         predictions = prediction_dict["instances"]
-        frommode = BoxMode.XYWH_ABS
-        if len(predictions) > 0 and len(predictions[0]["bbox"]) == 5:
-            frommode = BoxMode.XYWHA_ABS
         predict_boxes = [
-            BoxMode.convert(prediction['bbox'], frommode, BoxMode.XYXY_ABS)
+            BoxMode.convert(prediction['bbox'], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
             for prediction in predictions
         ]
         predict_classes = torch.tensor([
@@ -350,12 +318,9 @@ def _evaluate_predictions_ar(
         ann_ids = coco_api.getAnnIds(imgIds=image_id)
         anno = coco_api.loadAnns(ann_ids)
         anno = [obj for obj in anno if obj["iscrowd"] == 0]
-        gt_boxes = [obj["bbox"] for obj in anno]
-        if len(anno) > 0 and len(anno[0]["bbox"]) == 5:
-            gt_boxes = [bounding_of_rbox(box) for box in gt_boxes]
         gt_boxes = [
-            BoxMode.convert(box, BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
-            for box in gt_boxes
+            BoxMode.convert(obj["bbox"], BoxMode.XYWH_ABS, BoxMode.XYXY_ABS)
+            for obj in anno
         ]
         gt_classes = torch.tensor([
             metadata.thing_dataset_id_to_contiguous_id[obj["category_id"]]
@@ -487,72 +452,3 @@ def _evaluate_predictions_on_coco(coco_gt, coco_results, iou_type, kpt_oks_sigma
     coco_eval.summarize()
 
     return coco_eval
-
-
-def instances_to_coco_json(instances, img_id):
-    """
-    Dump an "Instances" object to a COCO-format json that's used for evaluation.
-
-    Args:
-        instances (Instances):
-        img_id (int): the image id
-
-    Returns:
-        list[dict]: list of json annotations in COCO format.
-    """
-    num_instance = len(instances)
-    if num_instance == 0:
-        return []
-
-    boxes = instances.pred_boxes.tensor.numpy()
-    bboxes = []
-    for i in range(boxes.shape[0]):
-        box = boxes[i]
-        if len(box) == 5:
-            box = bounding_of_rbox(box)
-        bboxes.append(box)
-    bboxes = np.stack(bboxes, 0)
-    # boxes = BoxMode.convert(boxes, BoxMode.XYXY_ABS, BoxMode.XYWH_ABS)
-    boxes = bboxes.tolist()
-    scores = instances.scores.tolist()
-    classes = instances.pred_classes.tolist()
-
-    has_mask = instances.has("pred_masks")
-    if has_mask:
-        # use RLE to encode the masks, because they are too large and takes memory
-        # since this evaluator stores outputs of the entire dataset
-        rles = [
-            mask_util.encode(np.array(mask[:, :, None], order="F", dtype="uint8"))[0]
-            for mask in instances.pred_masks
-        ]
-        for rle in rles:
-            # "counts" is an array encoded by mask_util as a byte-stream. Python3's
-            # json writer which always produces strings cannot serialize a bytestream
-            # unless you decode it. Thankfully, utf-8 works out (which is also what
-            # the pycocotools/_mask.pyx does).
-            rle["counts"] = rle["counts"].decode("utf-8")
-
-    has_keypoints = instances.has("pred_keypoints")
-    if has_keypoints:
-        keypoints = instances.pred_keypoints
-
-    results = []
-    for k in range(num_instance):
-        result = {
-            "image_id": img_id,
-            "category_id": classes[k],
-            "bbox": boxes[k],
-            "score": scores[k],
-        }
-        if has_mask:
-            result["segmentation"] = rles[k]
-        if has_keypoints:
-            # In COCO annotations,
-            # keypoints coordinates are pixel indices.
-            # However our predictions are floating point coordinates.
-            # Therefore we subtract 0.5 to be consistent with the annotation format.
-            # This is the inverse of data loading logic in `datasets/coco.py`.
-            keypoints[k][:, :2] -= 0.5
-            result["keypoints"] = keypoints[k].flatten().tolist()
-        results.append(result)
-    return results
