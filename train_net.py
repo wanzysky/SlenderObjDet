@@ -174,9 +174,6 @@ def main(args):
     consider writing your own training loop or subclassing the trainer.
     """
     trainer = Trainer(cfg)
-    import ipdb
-
-    ipdb.set_trace()
     trainer.resume_or_load(resume=args.resume)
     if cfg.TEST.AUG.ENABLED:
         trainer.register_hooks(
