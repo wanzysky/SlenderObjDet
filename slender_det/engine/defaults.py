@@ -10,8 +10,10 @@ from detectron2.utils import comm
 from detectron2.utils.collect_env import collect_env_info
 from detectron2.utils.env import seed_all_rng
 from detectron2.utils.logger import setup_logger
+from slender_det.checkpoint import DetectionCheckpointer
 from slender_det.data import build_detection_test_loader, build_detection_train_loader
 from slender_det.modeling import build_model
+from slender_det.utils.file_io import PathManager
 
 from . import hooks
 
@@ -36,7 +38,8 @@ def default_setup(cfg, args):
     setup_logger(output_dir, distributed_rank=rank, name="fvcore")
     setup_logger(output_dir, distributed_rank=rank)
     logger = setup_logger(
-        output_dir, distributed_rank=rank, name="slender_det", abbrev_name="605510k")
+        output_dir, distributed_rank=rank, name="slender_det", abbrev_name="605510k"
+    )
 
     logger.info("Rank of current process: {}. World size: {}".format(rank, comm.get_world_size()))
     logger.info("Environment info:\n" + collect_env_info())
@@ -71,6 +74,16 @@ class BaseTrainer(DefaultTrainer):
     """
     A simple warpper class for using our models/datasets/evaluators
     """
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.checkpointer = DetectionCheckpointer(
+            # Assume you want to save checkpoints together with logs/statistics
+            self.model,
+            cfg.OUTPUT_DIR,
+            optimizer=self.checkpointer.checkpointables["optimizer"],
+            scheduler=self.checkpointer.checkpointables["scheduler"],
+        )
 
     def build_hooks(self):
         """

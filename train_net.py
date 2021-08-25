@@ -21,18 +21,18 @@ import os
 from collections import OrderedDict
 
 import detectron2.utils.comm as comm
-from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.data import MetadataCatalog
 from detectron2.engine import default_argument_parser, hooks, launch
+from detectron2.evaluation import COCOEvaluator as D2COCOEvaluator
 from detectron2.evaluation import (
     DatasetEvaluator,
-    COCOEvaluator as D2COCOEvaluator,
     DatasetEvaluators,
     RotatedCOCOEvaluator,
     print_csv_format,
     verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
+from slender_det.checkpoint import DetectionCheckpointer
 from slender_det.config import get_cfg
 from slender_det.engine import BaseTrainer, default_setup
 from slender_det.evaluation import COCOEvaluator, inference_on_dataset
@@ -174,6 +174,9 @@ def main(args):
     consider writing your own training loop or subclassing the trainer.
     """
     trainer = Trainer(cfg)
+    import ipdb
+
+    ipdb.set_trace()
     trainer.resume_or_load(resume=args.resume)
     if cfg.TEST.AUG.ENABLED:
         trainer.register_hooks(

@@ -1,21 +1,18 @@
-import logging
 import copy
-
-import cv2
+import logging
+from concern.smart_path import smart_path
 import numpy as np
+import cv2
+import pycocotools.mask as mask_util
 import torch
 from fvcore.common.file_io import PathManager
 from PIL import Image, ImageOps
+
 from detectron2.data import DatasetMapper as D2Mapper
-from detectron2.data import transforms as T
 from detectron2.data import detection_utils as utils
-from detectron2.utils.logger import log_every_n_seconds
-
-from concern.smart_path import smart_path
-from utils.nori_redis import NoriRedis
-
-import pycocotools.mask as mask_util
-
+from detectron2.data import transforms as T
+from detectron2.data.catalog import MetadataCatalog
+from detectron2.data.detection_utils import polygons_to_bitmask
 from detectron2.structures import (
     BitMasks,
     Boxes,
@@ -26,10 +23,9 @@ from detectron2.structures import (
     RotatedBoxes,
     polygons_to_bitmask,
 )
-
-from detectron2.data.catalog import MetadataCatalog
-from detectron2.data.detection_utils import polygons_to_bitmask
+from detectron2.utils.logger import log_every_n_seconds
 from slender_det.structures.borders import BorderMasks
+from slender_det.utils.nori_redis import NoriRedis
 
 
 class BorderMaskMapper(D2Mapper):
@@ -37,12 +33,7 @@ class BorderMaskMapper(D2Mapper):
     Inherited from DatasetMapper of Detectron2, but adding border masks to data dicts.
     """
 
-    def __init__(
-            self,
-            cfg,
-            mask_keys=["sizes"],
-            is_train=True
-    ):
+    def __init__(self, cfg, mask_keys=["sizes"], is_train=True):
         super().__init__(cfg, is_train=is_train)
         assert len(mask_keys) > 0
         self.mask_keys = mask_keys
@@ -58,12 +49,12 @@ class BorderMaskMapper(D2Mapper):
         split_name = "train2017" if self.is_train else "val2017"
 
         self.image_fetcher = NoriRedis(
-            cfg,
-            smart_path(cfg.NORI_PATH).joinpath(split_name + ".nori").as_uri())
+            cfg, smart_path(cfg.NORI_PATH).joinpath(split_name + ".nori").as_uri()
+        )
         if self.need_masks:
             self.sizes_fecher = NoriRedis(
-                cfg,
-                smart_path(cfg.NORI_PATH).joinpath(split_name + "_sizes.nori").as_uri())
+                cfg, smart_path(cfg.NORI_PATH).joinpath(split_name + "_sizes.nori").as_uri()
+            )
 
     def masks_for_image(self, dataset_dict, transforms):
         image_name = smart_path(dataset_dict["file_name"]).name
@@ -80,9 +71,12 @@ class BorderMaskMapper(D2Mapper):
                 ratio_h = resize_tfm.new_h / resize_tfm.h
                 ratio_w = resize_tfm.new_w / resize_tfm.w
                 image = np.stack(
-                    [transforms.apply_image(image[0] * ratio_w),
-                     transforms.apply_image(image[1] * ratio_h)],
-                    axis=0)
+                    [
+                        transforms.apply_image(image[0] * ratio_w),
+                        transforms.apply_image(image[1] * ratio_h),
+                    ],
+                    axis=0,
+                )
             else:
                 image = image.reshape((dataset_dict["height"], dataset_dict["width"]))
                 image = transforms.apply_image(image)
@@ -157,16 +151,17 @@ class BorderMaskMapper(D2Mapper):
             # USER: Implement additional transformations if you have other types of data
             annos = [
                 utils.transform_instance_annotations(
-                    obj, transforms, image_shape, keypoint_hflip_indices=self.keypoint_hflip_indices
+                    obj,
+                    transforms,
+                    image_shape,
+                    keypoint_hflip_indices=self.keypoint_hflip_indices,
                 )
                 for obj in dataset_dict.pop("annotations")
                 if obj.get("iscrowd", 0) == 0
             ]
 
             # instances = utils.annotations_to_instances(
-            instances = annotations_to_instances(
-                annos, image_shape, mask_format=self.mask_format
-            )
+            instances = annotations_to_instances(annos, image_shape, mask_format=self.mask_format)
             # Create a tight bounding box from masks, useful when image is cropped
             if self.crop_gen and instances.has("gt_masks"):
                 instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
@@ -175,7 +170,9 @@ class BorderMaskMapper(D2Mapper):
         if self.need_masks:
             dataset_dict.update(self.masks_for_image(dataset_dict, transforms))
             for key in self.mask_keys:
-                assert dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:], dataset_dict[key].shape
+                assert (
+                    dataset_dict[key].shape[-2:] == dataset_dict["image"].shape[1:]
+                ), dataset_dict[key].shape
         return dataset_dict
 
 
