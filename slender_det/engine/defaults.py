@@ -13,6 +13,7 @@ from detectron2.utils.logger import setup_logger
 from slender_det.checkpoint import DetectionCheckpointer
 from slender_det.data import build_detection_test_loader, build_detection_train_loader
 from slender_det.modeling import build_model
+from slender_det.solver import build_optimizer
 from slender_det.utils.file_io import PathManager
 
 from . import hooks
@@ -145,6 +146,14 @@ class BaseTrainer(DefaultTrainer):
         logger = logging.getLogger(__name__)
         logger.info("Model:\n{}".format(model))
         return model
+
+    @classmethod
+    def build_optimizer(cls, cfg, model):
+        """
+        Returns:
+            torch.optim.Optimizer:
+        """
+        return build_optimizer(cfg, model)
 
     @classmethod
     def build_train_loader(cls, cfg):

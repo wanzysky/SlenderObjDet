@@ -1,0 +1,11 @@
+_BASE_: "./base_pvt_l_FPN_2x.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Unsupervised Offset"
+  PVT:
+    DEPTH: "medium"
+
+SOLVER:
+  OPTIM: "ADAMW"
+  BASE_LR: 0.0002
+  IMS_PER_BATCH: 16

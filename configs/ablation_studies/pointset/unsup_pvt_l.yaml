@@ -1,0 +1,4 @@
+_BASE_: "./base_pvt_l_FPN_2x.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Unsupervised Offset"

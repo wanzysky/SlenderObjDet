@@ -33,6 +33,16 @@ _C.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE = "point"
 
 _C.MODEL.PROPOSAL_GENERATOR.HEAD_NAME = ""
 
+
+# ---------------------------------------------------------------------------- #
+# PVT Backbone Options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.PVT = CN()
+#
+_C.MODEL.PVT.DEPTH = "small"
+# pvt1..4 for FPN backbone
+_C.MODEL.PVT.OUT_FEATURES = ["pvt1", "pvt2", "pvt3", "pvt4"]
+
 # ---------------------------------------------------------------------------- #
 # Hourglass Backbone Options used for CornerNet only
 # ---------------------------------------------------------------------------- #
@@ -66,7 +76,7 @@ _C.MODEL.CORNER_NET.NORM = "FrozenBN"
 _C.MODEL.FCOS = CN()
 # the number of classes excluding background
 _C.MODEL.FCOS.NUM_CLASSES = 80
-_C.MODEL.FCOS.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.FCOS.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.FCOS.FPN_STRIDES = [8, 16, 32, 64, 128]
 _C.MODEL.FCOS.PRIOR_PROB = 0.01
 _C.MODEL.FCOS.INFERENCE_TH = 0.05
@@ -101,7 +111,7 @@ _C.MODEL.FCOS.SMOOTH_L1_LOSS_BETA = 0.1
 _C.MODEL.REPPOINTS = CN()
 
 _C.MODEL.REPPOINTS.NUM_CLASSES = 80
-_C.MODEL.REPPOINTS.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.REPPOINTS.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.REPPOINTS.FPN_STRIDES = [8, 16, 32, 64, 128]
 
 _C.MODEL.REPPOINTS.FEAT_CHANNELS = 256
@@ -132,7 +142,7 @@ _C.MODEL.REPPOINTS.NMS_THRESH_TEST = 0.5
 _C.MODEL.META_ARCH = CN()
 _C.MODEL.META_ARCH.NAME = "PointSetHead"
 _C.MODEL.META_ARCH.NUM_CLASSES = 80
-_C.MODEL.META_ARCH.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.META_ARCH.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.META_ARCH.FPN_STRIDES = [8, 16, 32, 64, 128]
 
 # base convs
@@ -185,8 +195,11 @@ _C.MODEL.META_ARCH.NMS_THRESH_TEST = 0.5
 _C.MODEL.META_ARCH.PRE_NMS_TOP_N = 1000
 _C.MODEL.META_ARCH.PRE_NMS_THRESH = 0.05
 
-#for slenderness
+# for slenderness
 _C.MODEL.META_ARCH.SLENDER_CENTERNESS = False
+
+# optimizer, "SGD", "ADAM", "ADAMW", "ADAGRAD"
+_C.SOLVER.OPTIM = "SGD"
 
 
 def get_cfg() -> CN:

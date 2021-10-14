@@ -19,7 +19,7 @@ MODEL:
 
 DATASETS:
   TRAIN: ("coco_2017_train",)
-#  TEST: ("coco_2017_val",)
+  # TEST: ("coco_2017_val",)
   TEST: ("coco_objects365_val_with_masks",)
 SOLVER:
   IMS_PER_BATCH: 16
@@ -29,5 +29,9 @@ SOLVER:
 
 INPUT:
   MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+
+VIS_PERIOD: 2000
+TEST:
+  EVAL_PERIOD: 5000
 
 VERSION: 2
