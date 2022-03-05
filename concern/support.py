@@ -73,8 +73,31 @@ def ratio_of_polygon(polygon):
     return min(w, h) / max(w, h)
 
 
+def rbox_from_polygon(polygon) -> list:
+    polygon = np.concatenate(polygon, 0).reshape(-1, 2)
+    hull = cv2.convexHull(polygon.astype(np.float32)).reshape(-1, 2)
+    center, size, angle = cv2.minAreaRect(hull.astype(np.float32))
+    angle = -angle
+    while angle < 0:
+        angle += 180
+    while angle > 180:
+        angle -= 180
+
+    if angle > 90:
+        size = [size[1], size[0]]
+        angle = angle - 90
+    if angle > 45:
+        angle -= 90
+        size = [size[1], size[0]]
+    return [*center, *size, angle]
+
+
 def fig2image(fig: plt.Figure):
     fig.canvas.draw()
     buff, (width, height) = fig.canvas.print_to_buffer()
     image = np.fromstring(buff, dtype=np.uint8).reshape(height, width, 4)
     return image
+
+def bounding_of_rbox(box):
+    box = cv2.boundingRect(cv2.boxPoints(((box[0], box[1]), (box[2], box[3]), -box[4])))
+    return np.array(box).tolist()

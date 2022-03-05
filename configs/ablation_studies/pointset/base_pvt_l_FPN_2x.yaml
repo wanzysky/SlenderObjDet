@@ -1,0 +1,35 @@
+MODEL:
+  META_ARCHITECTURE: "AblationMetaArch"
+  PIXEL_MEAN: [123.675, 116.28, 103.53]
+  PIXEL_STD: [58.395, 57.12, 57.375]
+  MASK_ON: False
+  BACKBONE:
+    NAME: "build_retinanet_pvt_fpn_backbone"
+  PVT:
+    DEPTH: "large"
+    OUT_FEATURES: ["pvt2", "pvt3", "pvt4"]
+  FPN:
+    IN_FEATURES: ["pvt2", "pvt3", "pvt4"]
+  META_ARCH:
+    NAME: "PointSetHead"
+    RES_REFINE: True
+
+INPUT:
+  FORMAT: "RGB"
+  MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_objects365_val_with_masks",)
+
+SOLVER:
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.01
+  STEPS: (120000, 160000)
+  MAX_ITER: 180000
+
+VIS_PERIOD: 2000
+TEST:
+  EVAL_PERIOD: 5000
+
+VERSION: 2

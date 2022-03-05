@@ -1,10 +1,14 @@
 import json
 import time
 
+import torch
 from pycocotools.coco import COCO as Base
 from collections import defaultdict
+from detectron2.structures import RotatedBoxes
+from detectron2.structures import BoxMode
 
 from slender_det.structures.masks import PolygonMasks
+from concern.support import rbox_from_polygon
 
 
 class COCO(Base):
@@ -54,12 +58,12 @@ class COCO(Base):
         self.cats = cats
 
     @classmethod
-    def compute_ratio(self, ann, oriented=None):
+    def compute_ratio(cls, ann, oriented=None):
         if "ratio" in ann:
             return ann
 
         if oriented is None:
-            oriented = self.oriented
+            oriented = cls.oriented
 
         if "segmentation" in ann:
             segm = [poly for poly in ann["segmentation"] if len(poly) % 2 == 0 and len(poly) >= 6]
@@ -78,4 +82,25 @@ class COCO(Base):
         segmentations = PolygonMasks([segm])
         ratio = segmentations.get_ratios(oriented=oriented)[0]
         ann["ratio"] = ratio
+        return ann
+
+    @classmethod
+    def compute_rbox(cls, ann: dict):
+        if "rbox" in ann:
+            return ann
+
+        assert "segmentation" in ann, "Segmentation label is required to generate rbox"
+
+        if ann["iscrowd"]:
+            ann["rbox"] = [*ann["bbox"][:4], 0]
+            ann["rbox_mode"] = BoxMode.XYWHA_ABS
+            return ann
+
+        try:
+            segm = [poly for poly in ann["segmentation"] if len(poly) % 2 == 0 and len(poly) >= 6]
+            ann["rbox"] = rbox_from_polygon(segm)
+        except:
+            import ipdb
+            ipdb.set_trace()
+        ann["rbox_mode"] = BoxMode.XYWHA_ABS
         return ann

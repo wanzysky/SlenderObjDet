@@ -1,23 +1,18 @@
 #!/usr/bin/env python
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
-import numpy as np
+import init_paths
 import os
-from itertools import chain
+from concern import webcv2
+import numpy as np
 import cv2
 import tqdm
 from PIL import Image
 
-from detectron2.data import DatasetCatalog, MetadataCatalog, build_detection_train_loader
-from detectron2.data import detection_utils as utils
-from detectron2.data.build import filter_images_with_few_keypoints
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
-
-import init_paths
 from slender_det.config import get_cfg
-from slender_det.data import BorderMaskMapper
-from concern import webcv2
+from slender_det.data import MetadataCatalog, build_detection_train_loader
 
 
 def setup(args):
@@ -45,6 +40,8 @@ def parse_args(in_args=None):
 
 if __name__ == "__main__":
     args = parse_args()
+    setup_logger(name="fvcore")
+    setup_logger(name="slender_det")
     logger = setup_logger()
     logger.info("Arguments: " + str(args))
     cfg = setup(args)
@@ -58,6 +55,7 @@ if __name__ == "__main__":
             webcv2.waitKey()
 
     train_data_loader = build_detection_train_loader(cfg)
+    import ipdb; ipdb.set_trace()
     for batch in tqdm.tqdm(train_data_loader):
         if args.speed:
             continue
@@ -69,7 +67,7 @@ if __name__ == "__main__":
             else:
                 img = np.asarray(Image.fromarray(img, mode=cfg.INPUT.FORMAT).convert("RGB"))
 
-            visualizer = Visualizer(img, metadata=metadata, scale=scale)
+            visualizer = Visualizer(img, metadata=metadata, scale=1.0)
             target_fields = per_image["instances"].get_fields()
             labels = [metadata.thing_classes[i] for i in target_fields["gt_classes"]]
             vis = visualizer.overlay_instances(

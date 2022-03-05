@@ -4,5 +4,6 @@ boto3
 geojson
 pyclipper
 gevent-websocket
-smart_path @ git+https://github.com/wanzysky/smart_path.git#egg=smart_path
 redis
+flask
+smart_path @ git+http://github.com/wanzysky/smart_path.git#egg=smart_path

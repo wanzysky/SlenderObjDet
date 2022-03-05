@@ -10,7 +10,7 @@ MODEL:
     IN_FEATURES: ["res3", "res4", "res5"]
   META_ARCH:
     NAME: "PointSetHead"
-    RES_REFINE: False
+    RES_REFINE: True
 
 DATASETS:
   TRAIN: ("coco_2017_train",)

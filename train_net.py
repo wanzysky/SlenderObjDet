@@ -19,28 +19,22 @@ You may want to write your own script with your datasets and other customization
 import logging
 import os
 from collections import OrderedDict
-import torch
 
 import detectron2.utils.comm as comm
-from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.data import MetadataCatalog
-from detectron2.engine import default_argument_parser, default_setup, hooks, launch
+from detectron2.engine import default_argument_parser, hooks, launch
+from detectron2.evaluation import COCOEvaluator as D2COCOEvaluator
 from detectron2.evaluation import (
     DatasetEvaluator,
-    CityscapesInstanceEvaluator,
-    CityscapesSemSegEvaluator,
-    COCOPanopticEvaluator,
     DatasetEvaluators,
-    LVISEvaluator,
-    PascalVOCDetectionEvaluator,
-    SemSegEvaluator,
-    verify_results,
+    RotatedCOCOEvaluator,
     print_csv_format,
+    verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
-
-from slender_det.engine import BaseTrainer
+from slender_det.checkpoint import DetectionCheckpointer
 from slender_det.config import get_cfg
+from slender_det.engine import BaseTrainer, default_setup
 from slender_det.evaluation import COCOEvaluator, inference_on_dataset
 
 
@@ -48,6 +42,7 @@ class Trainer(BaseTrainer):
     """
     We use the "BaseTrainer" which contains pre-defined default logic for standard training workflow
     """
+
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_folder=None):
         """
@@ -60,34 +55,12 @@ class Trainer(BaseTrainer):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
         evaluator_list = []
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
-        if evaluator_type in ["sem_seg", "coco_panoptic_seg"]:
-            evaluator_list.append(
-                SemSegEvaluator(
-                    dataset_name,
-                    distributed=True,
-                    num_classes=cfg.MODEL.SEM_SEG_HEAD.NUM_CLASSES,
-                    ignore_label=cfg.MODEL.SEM_SEG_HEAD.IGNORE_VALUE,
-                    output_dir=output_folder,
-                )
-            )
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
             evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
-        if evaluator_type == "coco_panoptic_seg":
-            evaluator_list.append(COCOPanopticEvaluator(dataset_name, output_folder))
-        if evaluator_type == "cityscapes_instance":
-            assert (
-                    torch.cuda.device_count() >= comm.get_rank()
-            ), "CityscapesEvaluator currently do not work with multiple machines."
-            return CityscapesInstanceEvaluator(dataset_name)
-        if evaluator_type == "cityscapes_sem_seg":
-            assert (
-                    torch.cuda.device_count() >= comm.get_rank()
-            ), "CityscapesEvaluator currently do not work with multiple machines."
-            return CityscapesSemSegEvaluator(dataset_name)
-        elif evaluator_type == "pascal_voc":
-            return PascalVOCDetectionEvaluator(dataset_name)
-        elif evaluator_type == "lvis":
-            return LVISEvaluator(dataset_name, cfg, True, output_folder)
+        if evaluator_type in ["rcoco"]:
+            evaluator_list.append(RotatedCOCOEvaluator(dataset_name, cfg, True, output_folder))
+            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
@@ -150,7 +123,6 @@ class Trainer(BaseTrainer):
         if len(results) == 1:
             results = list(results.values())[0]
         return results
-
 
     @classmethod
     def test_with_TTA(cls, cfg, model):

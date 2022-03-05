@@ -1,9 +1,11 @@
-from detectron2.data import get_detection_dataset_dicts
-from detectron2.data import DatasetCatalog, MetadataCatalog, Metadata
+from detectron2.data import (
+    DatasetCatalog,
+    Metadata,
+    MetadataCatalog,
+    get_detection_dataset_dicts,
+)
 
-from .build import build_train_loader as build_detection_train_loader
-from .build import build_test_loader as build_detection_test_loader
-from . import mappers
 # ensure the builtin datasets are registered
-from . import datasets
-from . import transforms
+from . import datasets, mappers, transforms
+from .build import build_test_loader as build_detection_test_loader
+from .build import build_train_loader as build_detection_train_loader

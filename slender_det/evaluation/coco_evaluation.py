@@ -106,6 +106,13 @@ class COCOEvaluator(Base):
             self._evaluate_predictions_ar(predictions)
             self._eval_predictions(set(self._tasks), predictions)
         # Copy so the caller can do whatever with results
+
+        if self._output_dir:
+            file_path = os.path.join(self._output_dir, name, "evaluate_metrics.pth")
+            print("Saving evaluation metrics to {}".format(file_path))
+            with PathManager.open(file_path, "wb") as f:
+                torch.save(self._results, f)
+
         return copy.deepcopy(self._results)
 
     def _eval_predictions(self, tasks, predictions):
@@ -210,7 +217,7 @@ class COCOEvaluator(Base):
             results_per_category.append(("{}".format(name), float(ap * 100)))
             results_per_category_r.append(
                 ("{}".format(name),
-                precisions[:, :, idx, :, -1].mean(0).mean(0)))
+                 precisions[:, :, idx, :, -1].mean(0).mean(0)))
 
         # tabulate it
         N_COLS = min(6, len(results_per_category) * 2)
@@ -228,22 +235,21 @@ class COCOEvaluator(Base):
         results["AP-ratios"] = {"AP-" + name: ap.tolist() for name, ap in results_per_category_r}
         return results
 
-
     def _evaluate_predictions_ar(self, predictions):
         res = {}
         aspect_ratios = {
             "all ratios": [0 / 1, 1e5 / 1],
-            " 0  - 1/5":  [0 / 1, 1 / 5],
-            "1/5 - 1/3":  [1 / 5, 1 / 3],
-            "1/3 - 3/1":  [1 / 3, 3 / 1],
-            "3/1 - 5/1":  [3 / 1, 5 / 1],
-            "5/1 - INF":  [5 / 1, 1e5 / 1],
+            " 0  - 1/5": [0 / 1, 1 / 5],
+            "1/5 - 1/3": [1 / 5, 1 / 3],
+            "1/3 - 3/1": [1 / 3, 3 / 1],
+            "3/1 - 5/1": [3 / 1, 5 / 1],
+            "5/1 - INF": [5 / 1, 1e5 / 1],
         }
         areas = {
             "all areas": [0, float("inf")],
-            "small":     [0, 32**2],
-            "medium":    [32**2, 96**2],
-            "large":     [96**2, float("inf")]
+            "small": [0, 32 ** 2],
+            "medium": [32 ** 2, 96 ** 2],
+            "large": [96 ** 2, float("inf")]
         }
         limits = [100]
         for limit in limits:
@@ -287,8 +293,8 @@ def _evaluate_predictions_ar(
     areas = list(areas.values())
     K = len(cats) + 1  # -1 for all classes
     R = len(ratios)
-    A = len(areas) # Area ranges
-    
+    A = len(areas)  # Area ranges
+
     counts_matrixes = []
     overlap_matrixes = []
 

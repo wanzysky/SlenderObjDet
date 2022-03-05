@@ -137,7 +137,8 @@ dmypy.json
 /train_log
 
 # Datasets
-/datasets
+/datasets/*
+!/datasets/*.*
 
 # Installed package
 src/

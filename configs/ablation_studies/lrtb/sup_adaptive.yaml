@@ -1,0 +1,6 @@
+_BASE_: "./base.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Supervised Offset"
+    SLENDER_CENTERNESS: True
+OUTPUT_DIR: ./train_log/0906_fcos_sup_slender_centerness

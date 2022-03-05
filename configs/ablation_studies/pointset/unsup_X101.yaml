@@ -1,0 +1,4 @@
+_BASE_: "./base_X101.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Unsupervised Offset"

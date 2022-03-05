@@ -1,12 +1,12 @@
+import datetime
 import logging
 import time
-import datetime
-
 import torch
-from detectron2.utils.comm import get_world_size, is_main_process
-from detectron2.evaluation import inference_context, DatasetEvaluators
-from detectron2.utils.logger import log_every_n_seconds
 from tqdm import tqdm
+
+from detectron2.evaluation import DatasetEvaluators, inference_context
+from detectron2.utils.comm import get_world_size, is_main_process
+from detectron2.utils.logger import log_every_n_seconds
 
 
 def inference_on_dataset(dataset_name, model, data_loader, evaluator):
@@ -48,8 +48,8 @@ def inference_on_dataset(dataset_name, model, data_loader, evaluator):
                 start_time = time.perf_counter()
                 total_compute_time = 0
 
-            start_compute_time = time.perf_counter()
             outputs = model(inputs)
+            start_compute_time = time.perf_counter()
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             total_compute_time += time.perf_counter() - start_compute_time
@@ -84,7 +84,11 @@ def inference_on_dataset(dataset_name, model, data_loader, evaluator):
         )
     )
 
-    results = evaluator.evaluate(dataset_name)
+    try:
+        results = evaluator.evaluate(dataset_name)
+    except:
+        results = evaluator.evaluate()
+
     # An evaluator may return None when not in main process.
     # Replace it by an empty dict instead to make it easier for downstream code to handle
     if results is None:

@@ -1,15 +1,46 @@
 import math
-
-import torch.nn.functional as F
 import fvcore.nn.weight_init as weight_init
-from detectron2.modeling.backbone import BACKBONE_REGISTRY, Backbone
-from detectron2.modeling.backbone import build_resnet_backbone
-from detectron2.modeling.backbone.fpn import FPN, LastLevelP6P7
-from detectron2.layers import ShapeSpec, Conv2d, cat, get_norm
+import torch.nn.functional as F
 
-from slender_det.layers.visual_transformer import (
-    Tokenizer, Transformer, Projector, DownsampleEmbedding
+from detectron2.layers import Conv2d, ShapeSpec, cat, get_norm
+from detectron2.modeling.backbone import (
+    BACKBONE_REGISTRY,
+    Backbone,
+    build_resnet_backbone,
 )
+from detectron2.modeling.backbone.fpn import FPN, LastLevelP6P7
+from slender_det.layers.visual_transformer import (
+    DownsampleEmbedding,
+    Projector,
+    Tokenizer,
+    Transformer,
+)
+
+from .pvt import build_pvt_backbone
+
+
+@BACKBONE_REGISTRY.register()
+def build_retinanet_pvt_fpn_backbone(cfg, input_shape: ShapeSpec):
+    """
+    Args:
+        cfg: a detectron2 CfgNode
+
+    Returns:
+        backbone (Backbone): backbone module, must be a subclass of :class:`Backbone`.
+    """
+    bottom_up = build_pvt_backbone(cfg, input_shape)
+    in_features = cfg.MODEL.FPN.IN_FEATURES
+    out_channels = cfg.MODEL.FPN.OUT_CHANNELS
+    in_channels_p6p7 = bottom_up.output_shape()["pvt4"].channels
+    backbone = FPN(
+        bottom_up=bottom_up,
+        in_features=in_features,
+        out_channels=out_channels,
+        norm=cfg.MODEL.FPN.NORM,
+        top_block=LastLevelP6P7(in_channels_p6p7, out_channels, in_feature="pvt4"),
+        fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
+    )
+    return backbone
 
 
 @BACKBONE_REGISTRY.register()
@@ -35,6 +66,7 @@ def build_retinanet_resnet_vt_fpn(cfg, input_shape: ShapeSpec):
     )
     return backbone
 
+
 @BACKBONE_REGISTRY.register()
 def build_retinanet_resnet_vt_fpn_backbone_use_p5(cfg, input_shape: ShapeSpec):
     """
@@ -57,6 +89,7 @@ def build_retinanet_resnet_vt_fpn_backbone_use_p5(cfg, input_shape: ShapeSpec):
         fuse_type=cfg.MODEL.FPN.FUSE_TYPE,
     )
     return backbone
+
 
 @BACKBONE_REGISTRY.register()
 def build_retinanet_resnet_fpn_backbone_use_p5(cfg, input_shape: ShapeSpec):
@@ -87,9 +120,9 @@ def _assert_strides_are_log2_contiguous(strides):
     Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
     """
     for i, stride in enumerate(strides[1:], 1):
-        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(
-            stride, strides[i - 1]
-        )
+        assert (
+            stride == 2 * strides[i - 1]
+        ), "Strides {} {} are not log2 contiguous".format(stride, strides[i - 1])
 
 
 class VT_FPN(FPN):
@@ -98,10 +131,18 @@ class VT_FPN(FPN):
     It replaces lateral convolutions with
     visual transformers in a conventional FPN.
     """
+
     def __init__(
-        self, bottom_up, in_features, out_channels,
-        norm="", top_block=None, fuse_type="sum",
-        pos_size_base=8, CT=1024, length=8
+        self,
+        bottom_up,
+        in_features,
+        out_channels,
+        norm="",
+        top_block=None,
+        fuse_type="sum",
+        pos_size_base=8,
+        CT=1024,
+        length=8,
     ):
 
         """
@@ -133,7 +174,7 @@ class VT_FPN(FPN):
             out_channels=out_channels,
             norm=norm,
             top_block=top_block,
-            fuse_type=fuse_type
+            fuse_type=fuse_type,
         )
         assert isinstance(bottom_up, Backbone)
 
@@ -156,11 +197,11 @@ class VT_FPN(FPN):
 
             pos_embedding = DownsampleEmbedding(
                 1,
-                size=pos_size_base*2**(num_levels-idx+1),
-                downasamples=num_levels-idx+1)
-            tokenizer = Tokenizer(
-                in_channels, CT, self.length, pos_embedding)
-            projector_in = in_channels if idx == num_levels -1 else out_channels
+                size=pos_size_base * 2 ** (num_levels - idx + 1),
+                downasamples=num_levels - idx + 1,
+            )
+            tokenizer = Tokenizer(in_channels, CT, self.length, pos_embedding)
+            projector_in = in_channels if idx == num_levels - 1 else out_channels
             projector = Projector(CT, projector_in, out_channels)
             output_conv = Conv2d(
                 out_channels,
@@ -190,7 +231,9 @@ class VT_FPN(FPN):
         self.in_features = in_features
         self.bottom_up = bottom_up
         # Return feature names are "p<stage>", like ["p2", "p3", ..., "p6"]
-        self._out_feature_strides = {"p{}".format(int(math.log2(s))): s for s in in_strides}
+        self._out_feature_strides = {
+            "p{}".format(int(math.log2(s))): s for s in in_strides
+        }
         # top block output feature maps.
         if self.top_block is not None:
             for s in range(stage, stage + self.top_block.num_levels):
@@ -235,16 +278,21 @@ class VT_FPN(FPN):
             x[1:], tokens[1:], self.projectors[1:], self.output_convs[1:]
         ):
             top_down_feature = F.interpolate(
-                prev_feature, scale_factor=2, mode="nearest")
+                prev_feature, scale_factor=2, mode="nearest"
+            )
             prev_features = projector(top_down_feature, token) + top_down_feature
             if self._fuse_type == "avg":
                 prev_features /= 2
             results.insert(0, output_conv(prev_features))
 
         if self.top_block is not None:
-            top_block_in_feature = bottom_up_features.get(self.top_block.in_feature, None)
+            top_block_in_feature = bottom_up_features.get(
+                self.top_block.in_feature, None
+            )
             if top_block_in_feature is None:
-                top_block_in_feature = results[self._out_features.index(self.top_block.in_feature)]
+                top_block_in_feature = results[
+                    self._out_features.index(self.top_block.in_feature)
+                ]
             results.extend(self.top_block(top_block_in_feature))
         assert len(self._out_features) == len(results)
         return dict(zip(self._out_features, results))

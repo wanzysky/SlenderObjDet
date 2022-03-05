@@ -15,7 +15,7 @@ perform per-region computation.
 The registered object will be called with `obj(cfg, input_shape)`.
 """
 
-FEAT_ADAPTION_METHODS = ["None", "Unsupervised Offset", "Supervised Offset"]
+FEAT_ADAPTION_METHODS = ["Empty", "Unsupervised Offset", "Supervised Offset", "Split Unsup Offset"]
 
 
 class HeadBase(nn.Module):
@@ -87,17 +87,16 @@ class HeadBase(nn.Module):
         self.max_detections_per_image = cfg.TEST.DETECTIONS_PER_IMAGE
 
     def make_feature_adaptive_layers(self):
-        assert self.feat_adaption in FEAT_ADAPTION_METHODS
+        assert self.feat_adaption in FEAT_ADAPTION_METHODS, \
+            "{} {}".format(self.feat_adaption, type(self.feat_adaption))
         in_channels = self.feat_channels
-        if self.feat_adaption == "None":
+        if self.feat_adaption == "Empty":
             cls_conv = nn.Conv2d(in_channels, self.feat_channels, 3, 1, 1)
             loc_conv_refine = nn.Conv2d(in_channels, self.loc_feat_channels, 3, 1, 1)
-        elif self.feat_adaption == "Unsupervised Offset" or self.feat_adaption == "Supervised Offset":
+        # assertion before, so simplify the judgements below
+        else:
             cls_conv = DeformConv(in_channels, self.feat_channels, 3, 1, 1)
             loc_conv_refine = DeformConv(in_channels, self.loc_feat_channels, 3, 1, 1)
-        else:
-            # TODO: refine error type
-            raise ValueError("feature adaptive method undefined: {}".format(self.feat_adaption))
 
         return cls_conv, loc_conv_refine
 

@@ -1,0 +1,7 @@
+_BASE_: "./base_X101.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Unsupervised Offset"
+    SLENDER_CENTERNESS: False
+#DATASETS:
+#  TEST: ("coco_objects365_val_with_masks",)

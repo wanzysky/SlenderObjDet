@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple, Optional, Dict
 import copy
 
 import torch
@@ -8,12 +8,19 @@ from detectron2.layers import ShapeSpec
 
 from detectron2.layers import ShapeSpec
 from detectron2.structures import Boxes, ImageList, Instances, pairwise_iou
+from detectron2.layers import ShapeSpec, batched_nms, cat, get_norm
 
 
 def grad_mul(tensor: torch.Tensor, weight: float):
     assert 0.0 <= weight <= 1.0
 
     return (1 - weight) * tensor.detach() + weight * tensor
+
+
+def lrtb_to_points(lrtb):
+    l, r, t, b = torch.split(lrtb, dim=1, split_size_or_sections=1)
+
+    return torch.cat([-l, -t, r, b], dim=1)
 
 
 def permute_to_N_HWA_K(tensor, K):
@@ -236,3 +243,22 @@ def points_to_box(points, method="minmax", moment_transfer=None, moment_mul=1.0)
         raise ValueError
 
     return bbox
+
+def flat_and_concate_levels(tensor_list: List[torch.Tensor]):
+    """
+    Flat tensors in different spatial sizes and concat them.
+    Args:
+        tensor_list: A list of tensors with the same shape
+            in the first two dimensions(N, C, H_i, W_i).
+    Returns:
+        Concatenated tensor (N, X, C).
+    """
+    if len(tensor_list) < 1:
+        return tensor_list
+
+    N, C = tensor_list[0].shape[:2]
+    tensor_list = [t.view(N, C, -1).permute(0, 2, 1) for t in tensor_list]
+
+    return torch.cat(tensor_list, dim=1)
+
+

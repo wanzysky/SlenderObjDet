@@ -5,7 +5,6 @@ from typing import List
 import torch
 from torch import nn
 import torch.nn.functional as F
-import torch.distributed as dist
 from fvcore.nn import sigmoid_focal_loss_jit
 
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY

@@ -129,9 +129,9 @@ class AblationMetaArch(nn.Module):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.head.in_features]
-        
+
         results = self.head(images, features)
-        
+
         processed_results = []
         for results_per_image, input_per_image, image_size in zip(
                 results, batched_inputs, images.image_sizes):

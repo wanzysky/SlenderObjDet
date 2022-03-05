@@ -18,6 +18,7 @@ from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
 from concern import webcv2
 from concern.support import ratio_of_polygon, ratio_of_bbox
+import slender_det.data
 
 
 def create_instances(predictions, image_size):

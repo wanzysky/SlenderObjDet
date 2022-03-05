@@ -33,6 +33,16 @@ _C.MODEL.PROPOSAL_GENERATOR.SAMPLE_MODE = "point"
 
 _C.MODEL.PROPOSAL_GENERATOR.HEAD_NAME = ""
 
+
+# ---------------------------------------------------------------------------- #
+# PVT Backbone Options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.PVT = CN()
+#
+_C.MODEL.PVT.DEPTH = "small"
+# pvt1..4 for FPN backbone
+_C.MODEL.PVT.OUT_FEATURES = ["pvt1", "pvt2", "pvt3", "pvt4"]
+
 # ---------------------------------------------------------------------------- #
 # Hourglass Backbone Options used for CornerNet only
 # ---------------------------------------------------------------------------- #
@@ -66,7 +76,7 @@ _C.MODEL.CORNER_NET.NORM = "FrozenBN"
 _C.MODEL.FCOS = CN()
 # the number of classes excluding background
 _C.MODEL.FCOS.NUM_CLASSES = 80
-_C.MODEL.FCOS.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.FCOS.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.FCOS.FPN_STRIDES = [8, 16, 32, 64, 128]
 _C.MODEL.FCOS.PRIOR_PROB = 0.01
 _C.MODEL.FCOS.INFERENCE_TH = 0.05
@@ -101,7 +111,7 @@ _C.MODEL.FCOS.SMOOTH_L1_LOSS_BETA = 0.1
 _C.MODEL.REPPOINTS = CN()
 
 _C.MODEL.REPPOINTS.NUM_CLASSES = 80
-_C.MODEL.REPPOINTS.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.REPPOINTS.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.REPPOINTS.FPN_STRIDES = [8, 16, 32, 64, 128]
 
 _C.MODEL.REPPOINTS.FEAT_CHANNELS = 256
@@ -113,6 +123,7 @@ _C.MODEL.REPPOINTS.PRIOR_PROB = 0.01
 
 _C.MODEL.REPPOINTS.FOCAL_LOSS_GAMMA = 2.0
 _C.MODEL.REPPOINTS.FOCAL_LOSS_ALPHA = 0.25
+
 _C.MODEL.REPPOINTS.LOSS_CLS_WEIGHT = 1.0
 _C.MODEL.REPPOINTS.LOSS_BBOX_INIT_WEIGHT = 0.5
 _C.MODEL.REPPOINTS.LOSS_BBOX_REFINE_WEIGHT = 1.0
@@ -131,7 +142,7 @@ _C.MODEL.REPPOINTS.NMS_THRESH_TEST = 0.5
 _C.MODEL.META_ARCH = CN()
 _C.MODEL.META_ARCH.NAME = "PointSetHead"
 _C.MODEL.META_ARCH.NUM_CLASSES = 80
-_C.MODEL.META_ARCH.IN_FEATURES = ['p3', 'p4', 'p5', 'p6', 'p7']
+_C.MODEL.META_ARCH.IN_FEATURES = ["p3", "p4", "p5", "p6", "p7"]
 _C.MODEL.META_ARCH.FPN_STRIDES = [8, 16, 32, 64, 128]
 
 # base convs
@@ -140,17 +151,20 @@ _C.MODEL.META_ARCH.STACK_CONVS = 3
 _C.MODEL.META_ARCH.FEAT_CHANNELS = 256
 _C.MODEL.META_ARCH.NORM = "GN"
 
-# "None", "Unsupervised Offset", "Supervised Offset"
-_C.MODEL.META_ARCH.FEAT_ADAPTION = "None"
+# "Empty", "Unsupervised Offset", "Supervised Offset"
+_C.MODEL.META_ARCH.FEAT_ADAPTION = "Empty"
 _C.MODEL.META_ARCH.RES_REFINE = False
 
 _C.MODEL.META_ARCH.LOC_FEAT_CHANNELS = 256
 
 _C.MODEL.META_ARCH.GRADIENT_MUL = 0.1
 _C.MODEL.META_ARCH.PRIOR_PROB = 0.01
+_C.MODEL.META_ARCH.NUM_CONVS = 4
+
+_C.MODEL.META_ARCH.BBOX_REG_LOSS_TYPE = "giou"
 
 # for retina based IoU Matcher
-_C.MODEL.META_ARCH.BBOX_REG_WEIGHTS = 1.0
+_C.MODEL.META_ARCH.BBOX_REG_WEIGHTS = (1.0, 1.0, 1.0, 1.0)
 _C.MODEL.META_ARCH.IOU_THRESHOLDS = [0.3, 0.7]
 _C.MODEL.META_ARCH.IOU_LABELS = [0, -1, 1]
 
@@ -168,16 +182,32 @@ _C.MODEL.META_ARCH.NUM_POINTS = 9
 _C.MODEL.META_ARCH.TRANSFORM_METHOD = "minmax"
 _C.MODEL.META_ARCH.MOMENT_MUL = 0.01
 
+_C.MODEL.META_ARCH.CENTER_SAMPLING_RADIUS = 0.0
+_C.MODEL.META_ARCH.NORM_REG_TARGETS = False
+_C.MODEL.META_ARCH.CENTERNESS_ON_LOC = False
+_C.MODEL.META_ARCH.IOU_LOSS_TYPE = "iou"
+
 # for inference
 _C.MODEL.META_ARCH.SCORE_THRESH_TEST = 0.05
 _C.MODEL.META_ARCH.TOPK_CANDIDATES_TEST = 1000
 _C.MODEL.META_ARCH.NMS_THRESH_TEST = 0.5
+
+
+_C.MODEL.META_ARCH.PRE_NMS_TOP_N = 1000
+_C.MODEL.META_ARCH.PRE_NMS_THRESH = 0.05
+
+# for slenderness
+_C.MODEL.META_ARCH.SLENDER_CENTERNESS = False
+
+# optimizer, "SGD", "ADAM", "ADAMW", "ADAGRAD"
+_C.SOLVER.OPTIM = "SGD"
 
 #fcos setting
 _C.MODEL.META_ARCH.CENTER_SAMPLING_RADIUS = 0.0
 _C.MODEL.META_ARCH.NORM_REG_TARGETS = False
 _C.MODEL.META_ARCH.CENTERNESS_ON_LOC = False
 _C.MODEL.META_ARCH.IOU_LOSS_TYPE = "iou"
+
 
 
 def get_cfg() -> CN:

@@ -1,0 +1,8 @@
+_BASE_: "./base.yaml"
+MODEL:
+  META_ARCH:
+    FEAT_ADAPTION: "Unsupervised Offset"
+    SLENDER_CENTERNESS: True
+#DATASETS:
+#  TEST: ("coco_objects365_val_with_masks",)
+OUTPUT_DIR: ./train_log/0907_fcos_unsup_slender_centerness

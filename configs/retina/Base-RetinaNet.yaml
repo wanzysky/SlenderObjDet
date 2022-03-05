@@ -13,7 +13,7 @@ MODEL:
     IOU_LABELS: [0, -1, 1]
 DATASETS:
   TRAIN: ("coco_2017_train",)
-  TEST: ("coco_2017_val",)
+  TEST: ("coco_objects365_val_with_masks", "coco_2017_val")
 SOLVER:
   IMS_PER_BATCH: 16
   BASE_LR: 0.01  # Note that RetinaNet uses a different default learning rate

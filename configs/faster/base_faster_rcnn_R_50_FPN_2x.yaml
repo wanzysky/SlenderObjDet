@@ -43,7 +43,5 @@ SOLVER:
   MAX_ITER: 180000
 INPUT:
   MIN_SIZE_TRAIN: (640, 672, 704, 736, 768, 800)
+  
 VERSION: 2
-
-
-OUTPUT_DIR: ./train_log/0616_base_faster_rcnn_R_50_FPN_2x
