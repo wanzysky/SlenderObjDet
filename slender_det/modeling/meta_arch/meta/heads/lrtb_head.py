@@ -13,17 +13,21 @@ from detectron2.structures import Boxes, Instances, ImageList
 from slender_det.layers import iou_loss, Scale
 
 from .meta_head import HeadBase, MEAT_HEADS_REGISTRY
+
 from .utils import grad_mul, lrtb_to_points
 from ...fcos.utils import compute_locations, compute_targets_for_locations, compute_centerness_targets, \
     permute_to_N_HW_K, permute_and_concat_v2, get_num_gpus, reduce_sum, INF, compute_slender_centerness_targets
 
 
+    
 @MEAT_HEADS_REGISTRY.register()
 class LRTBHead(HeadBase):
     def __init__(self, cfg, input_shape: List[ShapeSpec]):
         super().__init__(cfg, input_shape)
         head_params = cfg.MODEL.META_ARCH
-
+        
+        self.name = head_params.NAME
+        self.in_features = head_params.IN_FEATURES
         self.num_points = head_params.NUM_POINTS
         assert self.num_points == 2
 
@@ -32,9 +36,11 @@ class LRTBHead(HeadBase):
         self.centerness_on_loc = head_params.CENTERNESS_ON_LOC
         self.iou_loss_type = head_params.IOU_LOSS_TYPE
 
+
         self.pre_nms_thresh = head_params.PRE_NMS_THRESH
         self.pre_nms_top_n = head_params.PRE_NMS_TOP_N
         self.slender_centerness = head_params.SLENDER_CENTERNESS
+
 
         # init bbox pred
         self.loc_init_conv = nn.Conv2d(self.feat_channels, self.loc_feat_channels, 3, 1, 1)
@@ -47,6 +53,7 @@ class LRTBHead(HeadBase):
         self.cls_out = nn.Conv2d(self.feat_channels, self.num_classes, 1, 1, 0)
         self.ctn_out = nn.Conv2d(self.feat_channels, 1, 1, 1, 0)
         self.loc_refine_out = nn.Conv2d(self.loc_feat_channels, self.num_points * 2, 1, 1, 0)
+
 
         self.scales_init = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
         self.scales_refine = nn.ModuleList([Scale(init_value=1.0) for _ in range(5)])
@@ -62,6 +69,7 @@ class LRTBHead(HeadBase):
         elif self.feat_adaption == "Supervised Offset":
             self.offset_conv_extend = nn.Conv2d(self.feat_channels, 14, 1, 1, 0)
             self.dcn_kernel = 3
+
             self.dcn_pad = int((self.dcn_kernel - 1) / 2)
             dcn_base = np.arange(-self.dcn_pad, self.dcn_pad + 1).astype(np.float64)
             dcn_base_y = np.repeat(dcn_base, self.dcn_kernel)
@@ -73,7 +81,7 @@ class LRTBHead(HeadBase):
         # Initialization
         for modules in [
             self.loc_init_conv, self.loc_init_out, self.cls_conv,
-            self.loc_refine_conv, self.cls_out, self.loc_refine_out
+            self.loc_refine_conv, self.cls_out, self.ctn_out, self.loc_refine_out
         ]:
             for layer in modules.modules():
                 if isinstance(layer, nn.Conv2d):
@@ -100,7 +108,8 @@ class LRTBHead(HeadBase):
             self,
             images: ImageList,
             features: Dict[str, torch.Tensor],
-            gt_instances: Optional[List[Instances]] = None
+            gt_instances: Optional[List[Instances]] = None,
+            batched_inputs = None
     ):
         cls_outs, ctn_outs, loc_outs_init, loc_outs_refine = self._forward(features)
         # compute ground truth location (x, y)
@@ -140,6 +149,7 @@ class LRTBHead(HeadBase):
 
             loc_outs_init.append(loc_out_init)
 
+
             if self.feat_adaption == "Empty":
                 cls_feat_fa = self.cls_conv(cls_feat)
                 loc_feat_fa = self.loc_refine_conv(loc_feat)
@@ -158,9 +168,11 @@ class LRTBHead(HeadBase):
                 loc_feat_fa = self.loc_refine_conv(loc_feat, dcn_offsets_loc)
             elif self.feat_adaption == "Supervised Offset":
                 # build offsets for deformable conv
+
                 loc_out_init_grad_mul = grad_mul(loc_out_init, self.gradient_mul)
                 loc_out_init_grad_mul = lrtb_to_points(loc_out_init_grad_mul)
                 loc_out_init_grad_mul = loc_out_init_grad_mul / self.fpn_strides[l]
+
                 # TODOs: commpute offset for different methods
                 dcn_offsets = loc_out_init_grad_mul - dcn_base_offsets[:, [0, 1, -2, -1], :, :]
 
@@ -176,6 +188,7 @@ class LRTBHead(HeadBase):
                 raise RuntimeError("Got {}".format(self.feat_adaption))
 
             cls_outs.append(self.cls_out(F.relu(cls_feat_fa)))
+
             if self.centerness_on_loc:
                 ctn_outs.append(self.ctn_out(F.relu(loc_feat_fa)))
             else:
@@ -191,6 +204,7 @@ class LRTBHead(HeadBase):
                 loc_out_refine = loc_out_refine + loc_out_init.detach()
 
             loc_outs_refine.append(loc_out_refine)
+
 
         return cls_outs, ctn_outs, loc_outs_init, loc_outs_refine
 
@@ -249,7 +263,6 @@ class LRTBHead(HeadBase):
             loss_loc_refine = box_reg[foreground_idxs].sum()
             reduce_sum(center_score[foreground_idxs].new_tensor([0.0]))
             centerness_loss = center_score[foreground_idxs].sum()
-
         return dict(
             loss_cls=cls_loss * self.loss_cls_weight,
             centerness_loss=centerness_loss * self.loss_cls_weight,
@@ -308,12 +321,12 @@ class LRTBHead(HeadBase):
         boxes_all = []
         scores_all = []
         class_idxs_all = []
-
+        
         # Iterate over every feature level
         for box_cls_i, box_reg_i, locs_i, center_score_i in zip(box_cls, box_reg, locations, center_score):
             # (HxW, C)
             box_cls_i = box_cls_i.sigmoid_()
-            keep_idxs = box_cls_i > self.pre_nms_thresh
+            keep_idxs = box_cls_i > self.score_threshold
 
             # multiply the classification scores with center scores
             box_cls_i *= center_score_i.sigmoid_()
@@ -327,7 +340,7 @@ class LRTBHead(HeadBase):
             box_reg_i = box_reg_i[box_loc_i]
             locs_i = locs_i[box_loc_i]
 
-            per_pre_nms_top_n = keep_idxs.sum().clamp(max=self.pre_nms_top_n)
+            per_pre_nms_top_n = keep_idxs.sum().clamp(max=self.topk_candidates)
             if keep_idxs.sum().item() > per_pre_nms_top_n.item():
                 box_cls_i, topk_idxs = box_cls_i.topk(per_pre_nms_top_n, sorted=False)
 

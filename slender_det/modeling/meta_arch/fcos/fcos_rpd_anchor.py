@@ -23,6 +23,7 @@ from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
     compute_targets_for_locations, compute_centerness_targets
 from .utils import permute_and_concat_v2 as permute_and_concat
 
+from detectron2.modeling.meta_arch.anchor_generator import build_anchor_generator
 
 @META_ARCH_REGISTRY.register()
 class FCOSRepPoints(nn.Module):
@@ -66,6 +67,8 @@ class FCOSRepPoints(nn.Module):
             cfg.MODEL.RETINANET.IOU_LABELS,
             allow_low_quality_matches=True,
         )
+        
+        self.anchor_generator = build_anchor_generator(cfg, feature_shapes)
 
     @property
     def device(self):
@@ -95,6 +98,8 @@ class FCOSRepPoints(nn.Module):
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
+        
+        anchors = self.anchor_generator(features)
         box_cls, box_init, box_refine, ctr_sco = self.head(features)
 
         # compute ground truth location (x, y)
@@ -363,9 +368,6 @@ class FCOSRepPoints(nn.Module):
         """
         # note: private function; subject to changes
         processed_results = []
-        
-        import ipdb
-        ipdb.set_trace()
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
@@ -464,7 +466,9 @@ class FCOSRepPointsHead(torch.nn.Module):
         dcn_base_offset = np.stack([dcn_base_y, dcn_base_x], axis=1).reshape((-1))
         dcn_base_offset = torch.tensor(dcn_base_offset, dtype=torch.float32).view(1, -1, 1, 1)
         self.register_buffer("dcn_base_offset", dcn_base_offset)
-
+        
+        num_anchors = build_anchor_generator(cfg, input_shape).num_cell_anchors
+        
         self.deform_cls_conv = DeformConv(
             self.point_feat_channels,
             self.point_feat_channels,
@@ -487,12 +491,12 @@ class FCOSRepPointsHead(torch.nn.Module):
         self.offsets_refine = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(self.point_feat_channels,
-                      points_out_dim,
+                      points_out_dim * num_anchors,
                       1, 1, 0))
         self.logits = nn.Sequential(
             nn.ReLU(),
             nn.Conv2d(self.point_feat_channels,
-                      self.cls_out_channels,
+                      self.cls_out_channels * num_anchors,
                       1, 1, 0))
         #        self.cls_logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
         #        self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)

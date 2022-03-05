@@ -20,8 +20,43 @@ from slender_det.layers import Scale, iou_loss, DFConv2d
 
 from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
     compute_locations_per_level, compute_locations, get_sample_region, \
-    compute_targets_for_locations, compute_centerness_targets
-from .utils import permute_and_concat_v2 as permute_and_concat
+    compute_targets_for_locations
+
+def compute_centerness_targets(reg_targets, gt_ratio):
+    left_right = reg_targets[:, [0, 2]]
+    top_bottom = reg_targets[:, [1, 3]]
+    centerness = (left_right.min(dim=-1)[0] / left_right.max(dim=-1)[0]) * \
+                 (top_bottom.min(dim=-1)[0] / top_bottom.max(dim=-1)[0])
+    
+    return torch.pow(centerness, gt_ratio)
+
+
+def permute_and_concat(box_cls, box_reg_init, box_reg, center_score, ratio, num_classes=80):
+    """
+    Rearrange the tensor layout from the network output, i.e.:
+    list[Tensor]: #lvl tensors of shape (N, A x K, Hi, Wi)
+    to per-image predictions, i.e.:
+    Tensor: of shape (N x sum(Hi x Wi x A), K)
+    """
+    # for each feature level, permute the outputs to make them be in the
+    # same format as the labels. Note that the labels are computed for
+    # all feature levels concatenated, so we keep the same representation
+    # for the objectness, the box_reg and the center-ness
+    box_cls_flattened = [permute_to_N_HW_K(x, num_classes) for x in box_cls]
+    box_reg_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg]
+    box_reg_init_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg_init]
+    center_score = [permute_to_N_HW_K(x, 1) for x in center_score]
+    ratio = [permute_to_N_HW_K(x, 1) for x in ratio]
+    # concatenate on the first dimension (representing the feature levels), to
+    # take into account the way the labels were generated (with all feature maps
+    # being concatenated as well)
+    box_cls = cat(box_cls_flattened, dim=1).view(-1, num_classes)
+    box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
+    box_reg_init = cat(box_reg_init_flattened, dim=1).view(-1, 4)
+    center_score = cat(center_score, dim=1).view(-1)
+    ratio = cat(ratio, dim=1).view(-1)
+
+    return box_cls, box_reg_init, box_reg, center_score, ratio
 
 
 @META_ARCH_REGISTRY.register()
@@ -95,7 +130,7 @@ class FCOSRepPoints(nn.Module):
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.in_features]
-        box_cls, box_init, box_refine, ctr_sco = self.head(features)
+        box_cls, box_init, box_refine, ctr_sco, rat_sco = self.head(features)
 
         # compute ground truth location (x, y)
         shapes = [feature.shape[-2:] for feature in features]
@@ -124,21 +159,21 @@ class FCOSRepPoints(nn.Module):
                 self.get_ground_truth(locations, predicted_boxes_init, gt_instances)
             #            gt_classes, reg_targets = self.get_ground_truth(locations, gt_instances)
             losses = self.losses(init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, box_cls,
-                                 box_init, box_refine, ctr_sco, strides)
+                                 box_init, box_refine, ctr_sco, strides, rat_sco)
 
             return losses
         else:
-            results = self.inference(locations, box_cls, box_refine, ctr_sco, images.image_sizes)
+            results = self.inference(locations, box_cls, box_refine, ctr_sco, rat_sco, images.image_sizes)
             results = self.postprocess(results, batched_inputs, images.image_sizes)
 
             return results
 
-    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets,
-               pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, strides):
+    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, \
+               pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, strides, pred_ratio):
 
         strides = strides.repeat(pred_class_logits[0].shape[0])  # [N*X]
-        pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score = \
-            permute_and_concat(pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, self.num_classes)
+        pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, pred_ratio = \
+            permute_and_concat(pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, pred_ratio, self.num_classes)
         # Shapes: (N x R) and (N x R, 4), (N x R) respectively.
 
         init_gt_classes = init_gt_classes.flatten()
@@ -170,8 +205,15 @@ class FCOSRepPoints(nn.Module):
             pred_class_logits, gt_classes_target,
             alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, reduction="sum",
         ) / refine_num_pos_avg_per_gpu
-
-        gt_center_score = compute_centerness_targets(init_reg_targets[init_foreground_idxs])
+        
+        init_foreground_targets = init_reg_targets[init_foreground_idxs]
+        gt_ratio_1 = (init_foreground_targets[:,0] + init_foreground_targets[:,2]) \
+            / (init_foreground_targets[:,1] + init_foreground_targets[:,3])
+        gt_ratio_2 = 1 / gt_ratio_1
+        gt_ratios = torch.stack((gt_ratio_1,gt_ratio_2), dim = 1)
+        gt_ratio = gt_ratios.min(dim=1)[0]
+        gt_center_score = compute_centerness_targets(init_reg_targets[init_foreground_idxs], gt_ratio)
+        
         # average sum_centerness_targets from all gpus,
         # which is used to normalize centerness-weighed reg loss
         sum_centerness_targets_avg_per_gpu = \
@@ -190,9 +232,8 @@ class FCOSRepPoints(nn.Module):
         #            pred_box_reg[refine_foreground_idxs], refine_reg_targets[refine_foreground_idxs], 1,
         #            loss_type=self.iou_loss_type
         #        ) / sum_centerness_targets_avg_per_gpu
-
         centerness_loss = F.binary_cross_entropy_with_logits(
-            pred_center_score[init_foreground_idxs], gt_center_score, reduction='sum'
+            torch.pow(torch.abs(pred_center_score[init_foreground_idxs]), pred_ratio[init_foreground_idxs]), gt_center_score, reduction='sum'
         ) / init_num_pos_avg_per_gpu
 
         return dict(cls_loss=cls_loss, reg_loss_init=reg_loss_init, reg_loss=reg_loss, centerness_loss=centerness_loss)
@@ -280,39 +321,41 @@ class FCOSRepPoints(nn.Module):
     #        )
     #        return gt_classes, reg_targets
 
-    def inference(self, locations, box_cls, box_reg, ctr_sco, image_sizes):
+    def inference(self, locations, box_cls, box_reg, ctr_sco, rat_sco, image_sizes):
         results = []
 
         box_cls = [permute_to_N_HW_K(x, self.num_classes) for x in box_cls]
         box_reg = [permute_to_N_HW_K(x, 4) for x in box_reg]
         ctr_sco = [permute_to_N_HW_K(x, 1) for x in ctr_sco]
+        rat_sco = [permute_to_N_HW_K(x, 1) for x in rat_sco]
         # list[Tensor], one per level, each has shape (N, Hi x Wi x A, K or 4)
 
         for img_idx, image_size in enumerate(image_sizes):
             box_cls_per_image = [box_cls_per_level[img_idx] for box_cls_per_level in box_cls]
             box_reg_per_image = [box_reg_per_level[img_idx] for box_reg_per_level in box_reg]
             ctr_sco_per_image = [ctr_sco_per_level[img_idx] for ctr_sco_per_level in ctr_sco]
+            rat_sco_per_image = [rat_sco_per_level[img_idx] for rat_sco_per_level in rat_sco]
 
             results_per_image = self.inference_single_image(
-                locations, box_cls_per_image, box_reg_per_image, ctr_sco_per_image, tuple(image_size)
+                locations, box_cls_per_image, box_reg_per_image, ctr_sco_per_image, rat_sco_per_image, tuple(image_size)
             )
             results.append(results_per_image)
 
         return results
 
-    def inference_single_image(self, locations, box_cls, box_reg, center_score, image_size):
+    def inference_single_image(self, locations, box_cls, box_reg, center_score, ratio_score, image_size):
         boxes_all = []
         scores_all = []
         class_idxs_all = []
 
         # Iterate over every feature level
-        for box_cls_i, box_reg_i, locs_i, center_score_i in zip(box_cls, box_reg, locations, center_score):
+        for box_cls_i, box_reg_i, locs_i, center_score_i, ratio_score_i in zip(box_cls, box_reg, locations, center_score, ratio_score):
             # (HxW, C)
             box_cls_i = box_cls_i.sigmoid_()
             keep_idxs = box_cls_i > self.pre_nms_thresh
-
+            
             # multiply the classification scores with center scores
-            box_cls_i *= center_score_i.sigmoid_()
+            box_cls_i *= torch.pow(torch.abs(center_score_i), ratio_score_i).sigmoid_()
 
             box_cls_i = box_cls_i[keep_idxs]
             keep_idxs_nonzero_i = keep_idxs.nonzero()
@@ -363,9 +406,6 @@ class FCOSRepPoints(nn.Module):
         """
         # note: private function; subject to changes
         processed_results = []
-        
-        import ipdb
-        ipdb.set_trace()
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
@@ -497,6 +537,8 @@ class FCOSRepPointsHead(torch.nn.Module):
         #        self.cls_logits = nn.Conv2d(in_channels, num_classes, kernel_size=3, stride=1, padding=1)
         #        self.bbox_pred = nn.Conv2d(in_channels, 4, kernel_size=3, stride=1, padding=1)
         self.centerness = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
+        
+        self.ratio = nn.Conv2d(in_channels, 1, kernel_size=3, stride=1, padding=1)
 
         # initialization
         for modules in [self.cls_tower, self.bbox_tower,
@@ -527,6 +569,7 @@ class FCOSRepPointsHead(torch.nn.Module):
         bbox_reg = []
         centerness = []
         logits = []
+        ratio = []
         for l, feature in enumerate(x):
             cls_tower = self.cls_tower(feature)
             box_tower = self.bbox_tower(feature)
@@ -538,11 +581,17 @@ class FCOSRepPointsHead(torch.nn.Module):
                 centerness.append(self.centerness(box_tower))
             else:
                 centerness.append(self.centerness(cls_tower))
+            
+            ratio.append(self.ratio(cls_tower))
 
             # bbox_pred = self.scales[l](self.bbox_pred(box_tower))
             bbox_pred = self.scales[l](self.offsets_init(box_tower))
             if self.norm_reg_targets:
-                bbox_reg.append(F.relu(bbox_pred) * self.fpn_strides[l])
+                bbox_pred = F.relu(bbox_pred)
+                if self.training:
+                    bbox_reg.append(bbox_pred)
+                else:
+                    bbox_reg.append(bbox_pred * self.fpn_strides[l])
             else:
                 # bbox_reg.append(torch.exp(bbox_pred))
 
@@ -580,7 +629,7 @@ class FCOSRepPointsHead(torch.nn.Module):
         #        offsets_init = [torch.exp(f) for f in offsets_init]
         #        offsets_refine = [torch.exp(f) for f in offsets_refine]
 
-        return logits, offsets_init, offsets_refine, centerness
+        return logits, offsets_init, offsets_refine, centerness, ratio
 
     def offsets2ltrb(self, deltas: List[torch.Tensor], point_strides=[1, 2, 4, 8, 16]):
         '''

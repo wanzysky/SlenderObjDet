@@ -42,7 +42,7 @@ class HeadBase(nn.Module):
         self.loc_feat_channels = head_params.LOC_FEAT_CHANNELS
         self.gradient_mul = head_params.GRADIENT_MUL
         self.prior_prob = head_params.PRIOR_PROB
-
+        
         cls_subnet = []
         loc_subnet = []
         for i in range(self.stacked_convs):

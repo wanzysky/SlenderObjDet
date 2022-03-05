@@ -1,0 +1,11 @@
+_BASE_: "Base-Fcos.yaml"
+MODEL:
+  META_ARCHITECTURE: "FCOSAnchor"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  ANCHOR_GENERATOR:
+    SIZES: !!python/object/apply:eval ["[[x, x * 2**(1.0/3), x * 2**(2.0/3) ] for x in [32, 64, 128, 256, 512 ]]"]
+SOLVER:
+  IMS_PER_BATCH: 16
+OUTPUT_DIR: ./train_log/0831_fcos_anchor_R_50_FPN_1x

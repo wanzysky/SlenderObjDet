@@ -118,14 +118,14 @@ class AblationMetaArch(nn.Module):
 
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.head.in_features]
-
+        
         losses = self.head(images, features, gt_instances)
 
         return losses
 
     def inference(self, batched_inputs):
         assert not self.training
-
+        
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         features = [features[f] for f in self.head.in_features]

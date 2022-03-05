@@ -1,0 +1,20 @@
+_BASE_: "base.yaml"
+MODEL:
+  META_ARCHITECTURE: "AblationMetaArch"
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  RESNETS:
+    DEPTH: 50
+  META_ARCH:
+    NAME: "LRTBHead"
+    IOU_LOSS_TYPE: "giou"
+    FEAT_ADAPTION: "Unsupervised Offset" #"None" or "Unsupervised Offset" or "Supervised Offset"
+    #FEAT_ADAPTION: "Supervised Offset"
+SOLVER:
+  IMS_PER_BATCH: 16
+#DATASETS:
+#  TEST: ("coco_objects365_val_with_masks",)
+#OUTPUT_DIR: ./train_log/0903_FCOS_NoOffset_R_50_FPN_1x
+OUTPUT_DIR: ./train_log/0905_FCOS_UnSupOffset_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0905_FCOS_SupOffset_noexp_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0905_FCOS_SupOffset_exp_R_50_FPN_1x
+#OUTPUT_DIR: ./train_log/0905_FCOS_NoOffset_R_50_FPN_1x

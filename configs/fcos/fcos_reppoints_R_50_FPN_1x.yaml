@@ -8,12 +8,12 @@ MODEL:
     USE_DCN_V2: False
   MASK_ON: False
 SOLVER:
-  IMS_PER_BATCH: 16
+  IMS_PER_BATCH: 1
 DATASETS:
-  TEST: ("coco_objects365_val_with_masks",)
+  TEST: ("coco_2017_val","coco_objects365_val_with_masks",)
 
-#OUTPUT_DIR: ./train_log/0815_FCOS_rpd_s1_top5_pow_ratio_centerness_R_50_FPN_1x #fcos+reppoints+s1_top5+ratio centerness
-OUTPUT_DIR: ./train_log/0804_FCOS_rpd_s1_top5_R_50_FPN_1x #fcos+reppoints+s1_top5
+OUTPUT_DIR: ./train_log/0815_FCOS_rpd_s1_top5_pow_ratio_centerness_R_50_FPN_1x #fcos+reppoints+s1_top5+ratio centerness
+#OUTPUT_DIR: ./train_log/0804_FCOS_rpd_s1_top5_R_50_FPN_1x #fcos+reppoints+s1_top5
 #OUTPUT_DIR: ./train_log/0814_FCOS_rpd_expand_centerness_pow_ratio_R_50_FPN_1x 
 #OUTPUT_DIR: ./train_log/0814_FCOS_rpd_ratio_conv_R_50_FPN_1x 
 #OUTPUT_DIR: ./train_log/0814_FCOS_rpd_init_with_direction_num_init_R_50_FPN_1x 

@@ -16,12 +16,108 @@ from detectron2.layers import ShapeSpec, batched_nms, cat, DeformConv
 from detectron2.modeling.postprocessing import detector_postprocess
 
 from slender_det.modeling.backbone import build_backbone
-from slender_det.layers import Scale, iou_loss, DFConv2d
+from slender_det.layers import Scale, iou_loss, DFConv2d, smooth_l1_loss_with_weight
 
 from .utils import INF, get_num_gpus, reduce_sum, permute_to_N_HW_K, \
     compute_locations_per_level, compute_locations, get_sample_region, \
-    compute_targets_for_locations, compute_centerness_targets
-from .utils import permute_and_concat_v2 as permute_and_concat
+    compute_centerness_targets
+
+
+def permute_and_concat(box_cls, box_reg_init, box_reg, center_score, num_classes=80):
+    """
+    Rearrange the tensor layout from the network output, i.e.:
+    list[Tensor]: #lvl tensors of shape (N, A x K, Hi, Wi)
+    to per-image predictions, i.e.:
+    Tensor: of shape (N x sum(Hi x Wi x A), K)
+    """
+    # for each feature level, permute the outputs to make them be in the
+    # same format as the labels. Note that the labels are computed for
+    # all feature levels concatenated, so we keep the same representation
+    # for the objectness, the box_reg and the center-ness
+    box_cls_flattened = [permute_to_N_HW_K(x, num_classes) for x in box_cls]
+    box_reg_flattened = [permute_to_N_HW_K(x, 4) for x in box_reg]
+    box_reg_init_flattened = [permute_to_N_HW_K(x, 18) for x in box_reg_init]
+    center_score = [permute_to_N_HW_K(x, 1) for x in center_score]
+    # concatenate on the first dimension (representing the feature levels), to
+    # take into account the way the labels were generated (with all feature maps
+    # being concatenated as well)
+    box_cls = cat(box_cls_flattened, dim=1).view(-1, num_classes)
+    box_reg = cat(box_reg_flattened, dim=1).view(-1, 4)
+    box_reg_init = cat(box_reg_init_flattened, dim=1).view(-1, 18)
+    center_score = cat(center_score, dim=1).view(-1)
+
+    return box_cls, box_reg_init, box_reg, center_score
+
+
+def compute_targets_for_locations(
+        locations, targets, object_sizes_of_interest, strides, center_sampling_radius, num_classes
+):
+    num_points = [len(_) for _ in locations]
+
+    locations = torch.cat(locations, dim=0)
+    xs, ys = locations[:, 0], locations[:, 1]
+
+    gt_classes = []
+    reg_targets = []
+    for im_i in range(len(targets)):
+        targets_per_im = targets[im_i]
+        bboxes = targets_per_im.gt_boxes.tensor
+        gt_classes_per_im = targets_per_im.gt_classes
+        area = targets_per_im.gt_boxes.area()
+        
+        #transfer bboxes from 4 channel to 18 channel
+        lt = bboxes[:,[0,1]]
+        rt = bboxes[:,[2,1]]
+        lb = bboxes[:,[0,3]]
+        rb = bboxes[:,[2,3]]
+        lc = torch.stack((bboxes[:,0],(bboxes[:,1]+bboxes[:,3])/2),dim=1)
+        tc = torch.stack(((bboxes[:,0]+bboxes[:,2])/2,bboxes[:,1]),dim=1)
+        rc = torch.stack((bboxes[:,2],(bboxes[:,1]+bboxes[:,3])/2),dim=1)
+        bc = torch.stack(((bboxes[:,0]+bboxes[:,2])/2,bboxes[:,3]),dim=1)
+        cc = torch.stack(((bboxes[:,0]+bboxes[:,2])/2,(bboxes[:,1]+bboxes[:,3])/2),dim=1)
+        expand_bboxes = torch.cat((lt,tc,rt,lc,cc,rc,lb,bc,rb),dim=1)
+        xys = locations.repeat(1,9)
+        offsets_per_im = xys[:,None] - expand_bboxes
+        
+        l = xs[:, None] - bboxes[:, 0][None]
+        t = ys[:, None] - bboxes[:, 1][None]
+        r = bboxes[:, 2][None] - xs[:, None]
+        b = bboxes[:, 3][None] - ys[:, None]
+        reg_targets_per_im = torch.stack([l, t, r, b], dim=2)
+
+        if center_sampling_radius > 0:
+            is_in_boxes = get_sample_region(bboxes, strides, num_points, xs, ys, radius=center_sampling_radius)
+        else:
+            # no center sampling, it will use all the locations within a ground-truth box
+            is_in_boxes = reg_targets_per_im.min(dim=2)[0] > 0
+
+        max_reg_targets_per_im = reg_targets_per_im.max(dim=2)[0]
+        # limit the regression range for each location
+        is_cared_in_the_level = \
+            (max_reg_targets_per_im >= object_sizes_of_interest[:, [0]]) & \
+            (max_reg_targets_per_im <= object_sizes_of_interest[:, [1]])
+
+        locations_to_gt_area = area[None].repeat(len(locations), 1)
+        locations_to_gt_area[is_in_boxes == 0] = INF
+        locations_to_gt_area[is_cared_in_the_level == 0] = INF
+
+        # if there are still more than one objects for a location,
+        # we choose the one with minimal area
+        locations_to_min_area, locations_to_gt_inds = locations_to_gt_area.min(dim=1)
+
+        gt_classes_per_im = gt_classes_per_im[locations_to_gt_inds]
+        # NOTE: set background labels to NUM_CLASSES not 0
+        gt_classes_per_im[locations_to_min_area == INF] = num_classes
+
+        # calculate regression targets in 'fcos' type
+        offsets_per_im = offsets_per_im[range(len(locations)), locations_to_gt_inds]
+        #reg_targets_per_im = reg_targets_per_im[range(len(locations)), locations_to_gt_inds]
+
+        gt_classes.append(gt_classes_per_im)
+        #reg_targets.append(reg_targets_per_im)
+        reg_targets.append(offsets_per_im)
+
+    return torch.stack(gt_classes), torch.stack(reg_targets)
 
 
 @META_ARCH_REGISTRY.register()
@@ -105,13 +201,18 @@ class FCOSRepPoints(nn.Module):
         strides = [torch.full((shapes[i][0] * shapes[i][1],), self.fpn_strides[i], device=self.device) for i in
                    range(len(shapes))]
         strides = torch.cat(strides, dim=0)
-        # change from ltrb to bbox
-        box_reg = [permute_to_N_HW_K(x, 4) for x in box_init]
+        
+        offset_reg = [permute_to_N_HW_K(x, 18) for x in box_init]
         # for each level
         predicted_boxes_init = []
         for i in range(len(locations)):
             locs_i = locations[i]  # [X,2]
-            box_reg_i = box_reg[i]  # [N,H*W,C]
+            offset_reg_i = offset_reg[i]  # [N,H*W,18]
+            box_reg_i_x1 = offset_reg_i[:,:,::2].min(dim=2, keepdim=True)[0]
+            box_reg_i_y1 = offset_reg_i[:,:,1::2].min(dim=2, keepdim=True)[0]
+            box_reg_i_x2 = offset_reg_i[:,:,::2].max(dim=2, keepdim=True)[0]
+            box_reg_i_y2 = offset_reg_i[:,:,1::2].max(dim=2, keepdim=True)[0]
+            box_reg_i = torch.cat((box_reg_i_x1,box_reg_i_y1,box_reg_i_x2,box_reg_i_y2), dim=2)
             locs_i = locs_i.repeat(box_reg_i.shape[0], 1, 1)  # [N,X,2]
             predicted_boxes = torch.stack([
                 locs_i[:, :, 0] - box_reg_i[:, :, 0], locs_i[:, :, 1] - box_reg_i[:, :, 1],
@@ -133,7 +234,7 @@ class FCOSRepPoints(nn.Module):
 
             return results
 
-    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets,
+    def losses(self, init_gt_classes, init_reg_targets, refine_gt_classes, refine_reg_targets, \
                pred_class_logits, pred_box_reg_init, pred_box_reg, pred_center_score, strides):
 
         strides = strides.repeat(pred_class_logits[0].shape[0])  # [N*X]
@@ -142,7 +243,7 @@ class FCOSRepPoints(nn.Module):
         # Shapes: (N x R) and (N x R, 4), (N x R) respectively.
 
         init_gt_classes = init_gt_classes.flatten()
-        init_reg_targets = init_reg_targets.view(-1, 4)
+        init_reg_targets = init_reg_targets.view(-1, 18)
 
         init_foreground_idxs = (init_gt_classes >= 0) & (init_gt_classes != self.num_classes)
         init_pos_inds = torch.nonzero(init_foreground_idxs).squeeze(1)
@@ -170,16 +271,29 @@ class FCOSRepPoints(nn.Module):
             pred_class_logits, gt_classes_target,
             alpha=self.focal_loss_alpha, gamma=self.focal_loss_gamma, reduction="sum",
         ) / refine_num_pos_avg_per_gpu
-
-        gt_center_score = compute_centerness_targets(init_reg_targets[init_foreground_idxs])
+        
+        offset_reg = init_reg_targets[init_foreground_idxs]  # [N,H*W,18]
+        box_reg_x1 = offset_reg[:,::2].min(dim=1, keepdim=True)[0] * -1
+        box_reg_y1 = offset_reg[:,1::2].min(dim=1, keepdim=True)[0] * -1
+        box_reg_x2 = offset_reg[:,::2].max(dim=1, keepdim=True)[0]
+        box_reg_y2 = offset_reg[:,1::2].max(dim=1, keepdim=True)[0]
+        box_reg = torch.cat((box_reg_x1,box_reg_y1,box_reg_x2,box_reg_y2), dim=1)
+        gt_center_score = compute_centerness_targets(box_reg)
         # average sum_centerness_targets from all gpus,
         # which is used to normalize centerness-weighed reg loss
         sum_centerness_targets_avg_per_gpu = \
             reduce_sum(gt_center_score.sum()).item() / float(num_gpus)
-        reg_loss_init = iou_loss(
-            pred_box_reg_init[init_foreground_idxs], init_reg_targets[init_foreground_idxs], gt_center_score,
-            loss_type=self.iou_loss_type
-        ) / sum_centerness_targets_avg_per_gpu
+#        reg_loss_init = iou_loss(
+#            pred_box_reg_init[init_foreground_idxs], init_reg_targets[init_foreground_idxs], gt_center_score,
+#            loss_type=self.iou_loss_type
+#        ) / sum_centerness_targets_avg_per_gpu
+        coords_norm_init = strides[init_foreground_idxs].unsqueeze(-1) * 18
+        reg_loss_init = smooth_l1_loss_with_weight(
+            pred_box_reg_init[init_foreground_idxs] / coords_norm_init,
+            init_reg_targets[init_foreground_idxs] / coords_norm_init,
+            gt_center_score,
+            0.11, reduction="sum") / sum_centerness_targets_avg_per_gpu * 0.5
+            #0.11, reduction="sum") / max(1, init_num_pos_avg_per_gpu)
 
         coords_norm_refine = strides[refine_foreground_idxs].unsqueeze(-1) * 4
         reg_loss = smooth_l1_loss(
@@ -363,9 +477,6 @@ class FCOSRepPoints(nn.Module):
         """
         # note: private function; subject to changes
         processed_results = []
-        
-        import ipdb
-        ipdb.set_trace()
         for results_per_image, input_per_image, image_size in zip(
                 instances, batched_inputs, image_sizes
         ):
@@ -542,7 +653,11 @@ class FCOSRepPointsHead(torch.nn.Module):
             # bbox_pred = self.scales[l](self.bbox_pred(box_tower))
             bbox_pred = self.scales[l](self.offsets_init(box_tower))
             if self.norm_reg_targets:
-                bbox_reg.append(F.relu(bbox_pred) * self.fpn_strides[l])
+                bbox_pred = F.relu(bbox_pred)
+                if self.training:
+                    bbox_reg.append(bbox_pred)
+                else:
+                    bbox_reg.append(bbox_pred * self.fpn_strides[l])
             else:
                 # bbox_reg.append(torch.exp(bbox_pred))
 
@@ -572,13 +687,15 @@ class FCOSRepPointsHead(torch.nn.Module):
                 self.offsets_refine(
                     self.deform_reg_conv(reg_features[i], dcn_offset)) +
                 offsets_init[i].detach())
-
+        
+        #use 9 points offsets_init as output
+        point_strides=[1, 2, 4, 8, 16]
+        for i in range(len(offsets_init)):
+            offsets_init[i] = offsets_init[i] * point_strides[i]
         # reshape the tensor from 9 points to 2 points
-        offsets_init = self.offsets2ltrb(offsets_init)
+        #offsets_init = self.offsets2ltrb(offsets_init)
         offsets_refine = self.offsets2ltrb(offsets_refine)
 
-        #        offsets_init = [torch.exp(f) for f in offsets_init]
-        #        offsets_refine = [torch.exp(f) for f in offsets_refine]
 
         return logits, offsets_init, offsets_refine, centerness
 
